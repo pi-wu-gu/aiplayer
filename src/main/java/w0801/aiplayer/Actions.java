@@ -38,6 +38,10 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
+import net.minecraft.network.protocol.game.ServerboundSignUpdatePacket;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
+import net.minecraft.world.level.block.entity.SignText;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ClickType;
@@ -220,6 +224,7 @@ final class Actions {
         register("time", Actions::time);
         register("block_at", Actions::blockAt);
         register("blockstate", Actions::blockState, "block_state");
+        register("sign_edit", Actions::signEdit, "sign");
         register("scan_region", Actions::scanRegion);
         register("find_block", Actions::findBlock, "search_block", "nearest_block");
         register("get_inventory", Actions::inventory, "inv_query");
@@ -553,6 +558,87 @@ final class Actions {
     }
 
     /** 高级联机（0.2.1.26）：connect {address:"ip:port"} 或 {} 用配置地址——立即发起连接并清零自动连接预算。 */
+    /**
+     * 告示牌写文本（v0.2.1.31）：一次动作直接写 4 行文本，替代逐键打字。
+     * 目标：准星命中的告示牌（先 look），或 x/y/z 显式指定。发送 ServerboundSignUpdatePacket
+     * 走原版服务端持久化路径（等价于编辑界面点完成），同时更新客户端方块实体即时可见。
+     */
+    private static String signEdit(JsonObject par) {
+        LocalPlayer p = requirePlayer();
+        BlockPos pos;
+        double dx = Json.optDouble(par, "x", Double.NaN);
+        if (!Double.isNaN(dx)) {
+            int y = (int) Math.floor(Json.optDouble(par, "y", Double.NaN));
+            int z = (int) Math.floor(Json.optDouble(par, "z", Double.NaN));
+            if (Double.isNaN(y + z)) {
+                return "sign_err: 指定坐标需同时给 x/y/z";
+            }
+            pos = new BlockPos((int) Math.floor(dx), y, z);
+        } else {
+            HitResult hit = p.pick(6.0, 0.0f, false);
+            if (!(hit instanceof BlockHitResult bhr)) {
+                return "sign_err: 准星未指向方块（先 look 对准告示牌，或用 x/y/z 指定坐标）";
+            }
+            pos = bhr.getBlockPos();
+        }
+        BlockEntity be = p.level().getBlockEntity(pos);
+        if (!(be instanceof SignBlockEntity sign)) {
+            return "sign_err: 目标不是告示牌（" + pos.toShortString() + "）";
+        }
+        if (sign.isWaxed()) {
+            return "sign_err: 该告示牌已涂蜡，无法编辑";
+        }
+        double distSq = p.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
+        if (distSq > 64.0) {
+            return String.format("sign_err: 距离过远（服务端要求 8 格内），当前约 %.1f 格",
+                    Math.sqrt(distSq));
+        }
+        boolean front = Json.optBool(par, "front", true);
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        if (par.has("lines") && par.get("lines").isJsonArray()) {
+            for (JsonElement el : par.getAsJsonArray("lines")) {
+                String sline = el.isJsonPrimitive() ? el.getAsString() : el.toString();
+                if (sline.length() > 45) {
+                    sline = sline.substring(0, 45);
+                }
+                lines.add(sline);
+                if (lines.size() == 4) {
+                    break;
+                }
+            }
+        }
+        if (lines.isEmpty() || lines.stream().allMatch(String::isBlank)) {
+            return "sign_err: 缺少 lines（最多 4 行的文本数组）";
+        }
+        while (lines.size() < 4) {
+            lines.add("");
+        }
+        if (p.connection == null) {
+            return "sign_err: 无网络连接";
+        }
+        // 客户端方块实体立即更新（视觉即时）；随后发更新包走服务端持久化
+        try {
+            SignText now = sign.getText(front);
+            for (int i = 0; i < 4; i++) {
+                now = now.setMessage(i, Component.literal(lines.get(i)));
+            }
+            sign.setText(now, front);
+            sign.setChanged();
+            p.level().sendBlockUpdated(pos, sign.getBlockState(), sign.getBlockState(), 3);
+        } catch (Throwable ignored) {
+            // 客户端预览失败不影响服务端更新
+        }
+        p.connection.send(new ServerboundSignUpdatePacket(pos, front,
+                lines.get(0), lines.get(1), lines.get(2), lines.get(3)));
+        AiPlayer.LOG.info("[AI Player] sign_edit: {} front={} lines={}", pos.toShortString(), front, lines);
+        return Json.obj(
+                Json.kv("action", Json.str("sign_edit")),
+                Json.kv("pos", Json.arr(List.of(Json.num(pos.getX()), Json.num(pos.getY()), Json.num(pos.getZ())))),
+                Json.kv("front", Json.bool(front)),
+                Json.kv("lines", Json.arr(lines.stream().map(Json::str).collect(java.util.stream.Collectors.toList()))),
+                Json.kv("note", Json.str("已发送更新包（服务端异步确认，可 look 后截图核验）")));
+    }
+
     private static String connectAction(JsonObject par) {
         String addr = Json.optString(par, "address", null);
         AiPlayer.LOG.info("[AI Player] connect 动作触发: address={}", addr == null ? "(用配置地址)" : addr);
