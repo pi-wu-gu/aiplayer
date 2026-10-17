@@ -39,6 +39,8 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.Tag;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.phys.Vec3;
@@ -226,6 +228,7 @@ final class Actions {
         register("blockstate", Actions::blockState, "block_state");
         register("sign_edit", Actions::signEdit, "sign");
         register("sign_read", Actions::signRead, "sign_text");
+        register("be_nbt", Actions::beNbt, "nbt_read", "block_entity_nbt");
         register("scan_region", Actions::scanRegion);
         register("find_block", Actions::findBlock, "search_block", "nearest_block");
         register("get_inventory", Actions::inventory, "inv_query");
@@ -559,6 +562,60 @@ final class Actions {
     }
 
     /** 高级联机（0.2.1.26）：connect {address:"ip:port"} 或 {} 用配置地址——立即发起连接并清零自动连接预算。 */
+    /**
+     * 方块实体 NBT 读取（v0.2.1.33，通用）：读任意方块实体已同步数据（SNBT 字符串，上限 4000 字符）。
+     * 典型用途：辉光管板 bits_n_bobs:nixie_board 的显示文字（存于其方块实体 NBT，
+     * 服务器无 data 命令权限时的唯一读取途径）。可选 key=只取顶层某键。
+     * 读客户端已同步数据——已加载区块内任意距离可用，无交互距离限制。
+     */
+    private static String beNbt(JsonObject par) {
+        LocalPlayer p = requirePlayer();
+        BlockPos pos;
+        double dx = Json.optDouble(par, "x", Double.NaN);
+        if (!Double.isNaN(dx)) {
+            int y = (int) Math.floor(Json.optDouble(par, "y", Double.NaN));
+            int z = (int) Math.floor(Json.optDouble(par, "z", Double.NaN));
+            if (Double.isNaN(y + z)) {
+                return "be_nbt_err: 指定坐标需同时给 x/y/z";
+            }
+            pos = new BlockPos((int) Math.floor(dx), y, z);
+        } else {
+            HitResult hit = p.pick(6.0, 0.0f, false);
+            if (!(hit instanceof BlockHitResult bhr)) {
+                return "be_nbt_err: 准星未指向方块（先 look 对准目标，或用 x/y/z 指定坐标）";
+            }
+            pos = bhr.getBlockPos();
+        }
+        BlockEntity be = p.level().getBlockEntity(pos);
+        if (be == null) {
+            return "be_nbt_err: " + pos.toShortString() + " 无方块实体（纯方块或区块未加载——太远时先走近）";
+        }
+        CompoundTag tag = be.saveWithFullMetadata(p.level().registryAccess());
+        String key = Json.optString(par, "key", null);
+        Tag out = tag;
+        String keyNote = "全部";
+        if (key != null && !key.isBlank()) {
+            if (!tag.contains(key)) {
+                return "be_nbt_err: 顶层无键 \"" + key + "\"，可用键见全量输出（去掉 key 参数）";
+            }
+            out = tag.get(key);
+            keyNote = key;
+        }
+        String snbt = out.toString();
+        boolean truncated = false;
+        if (snbt.length() > 4000) {
+            snbt = snbt.substring(0, 4000);
+            truncated = true;
+        }
+        return Json.obj(
+                Json.kv("action", Json.str("be_nbt")),
+                Json.kv("pos", Json.arr(List.of(Json.num(pos.getX()), Json.num(pos.getY()), Json.num(pos.getZ())))),
+                Json.kv("be_class", Json.str(be.getClass().getSimpleName())),
+                Json.kv("key", Json.str(keyNote)),
+                Json.kv("truncated", Json.bool(truncated)),
+                Json.kv("snbt", Json.str(snbt)));
+    }
+
     /**
      * 告示牌读文本（v0.2.1.32）：读取正反两面 4 行文本 + 颜色 + 辉光标志 + 涂蜡状态。
      * 文本存于告示牌方块实体（SignBlockEntity.frontText/backText，各含 messages[4]/
