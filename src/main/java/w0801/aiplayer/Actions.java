@@ -229,6 +229,7 @@ final class Actions {
         register("sign_edit", Actions::signEdit, "sign");
         register("sign_read", Actions::signRead, "sign_text");
         register("be_nbt", Actions::beNbt, "nbt_read", "block_entity_nbt");
+        register("item_nbt", Actions::itemNbt, "held_nbt", "item_components");
         register("scan_region", Actions::scanRegion);
         register("find_block", Actions::findBlock, "search_block", "nearest_block");
         register("get_inventory", Actions::inventory, "inv_query");
@@ -562,6 +563,43 @@ final class Actions {
     }
 
     /** 高级联机（0.2.1.26）：connect {address:"ip:port"} 或 {} 用配置地址——立即发起连接并清零自动连接预算。 */
+    /**
+     * 物品数据组件读取（v0.2.1.34）：读指定槽位（默认当前手持）物品的完整数据组件
+     * （耐久 damage、附魔、自定义名、容器内容等，1.21 数据组件制）。
+     * ★读是客户端本地的（物品栏数据本来就全在客户端）；★写没有客户端→服务器通道
+     * （服务器权威，原版仅铁砧/指令可改，/data 需 op——本服务器无权限）。
+     */
+    private static String itemNbt(JsonObject par) {
+        LocalPlayer p = requirePlayer();
+        int slot = Json.optInt(par, "slot", -1);
+        ItemStack st;
+        if (slot < 0) {
+            slot = p.getInventory().selected;
+            st = p.getMainHandItem();
+        } else {
+            st = p.getInventory().getItem(slot);
+        }
+        if (st == null || st.isEmpty()) {
+            return "item_nbt_err: 槽位 " + slot + " 为空";
+        }
+        Tag tag = st.save(p.level().registryAccess());
+        String snbt = tag.toString();
+        boolean truncated = false;
+        if (snbt.length() > 4000) {
+            snbt = snbt.substring(0, 4000);
+            truncated = true;
+        }
+        return Json.obj(
+                Json.kv("action", Json.str("item_nbt")),
+                Json.kv("slot", Json.num(slot)),
+                Json.kv("id", Json.str(itemId(st))),
+                Json.kv("count", Json.num(st.getCount())),
+                Json.kv("damage", Json.num(st.getDamageValue())),
+                Json.kv("max_damage", Json.num(st.getMaxDamage())),
+                Json.kv("truncated", Json.bool(truncated)),
+                Json.kv("components", Json.str(snbt)));
+    }
+
     /**
      * 方块实体 NBT 读取（v0.2.1.33，通用）：读任意方块实体已同步数据（SNBT 字符串，上限 4000 字符）。
      * 典型用途：辉光管板 bits_n_bobs:nixie_board 的显示文字（存于其方块实体 NBT，
