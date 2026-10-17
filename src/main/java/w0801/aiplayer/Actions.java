@@ -216,6 +216,7 @@ final class Actions {
         if (AiPlayerConfig.commandEnabled()) {
             register("command", Actions::command, "cmd");
         }
+        register("connect", Actions::connectAction, "join");
         register("time", Actions::time);
         register("block_at", Actions::blockAt);
         register("blockstate", Actions::blockState, "block_state");
@@ -549,6 +550,13 @@ final class Actions {
         }
         mc.getConnection().sendCommand(text);
         return "command: " + text;
+    }
+
+    /** 高级联机（0.2.1.26）：connect {address:"ip:port"} 或 {} 用配置地址——立即发起连接并清零自动连接预算。 */
+    private static String connectAction(JsonObject par) {
+        String addr = Json.optString(par, "address", null);
+        AiPlayer.LOG.info("[AI Player] connect 动作触发: address={}", addr == null ? "(用配置地址)" : addr);
+        return AiPlayerClient.requestConnect(addr);
     }
 
     private static String time(JsonObject par) {

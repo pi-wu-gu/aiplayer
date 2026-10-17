@@ -62,6 +62,13 @@ public final class AiPlayerConfig {
                      "默认 2：服务器宕机时试 2 次就停，不会无限刷连接。调大=更执着，1=只试一次。")
             .defineInRange("autoConnectMaxAttempts", 2, 1, 20);
 
+    public static final ModConfigSpec.BooleanValue LAN_AUTO_JOIN = B
+            .comment("【高级联机】主界面时监听 Minecraft 局域网世界广播（多播 224.0.2.60:4445），",
+                     "发现「对局域网开放」的世界后自动加入，优先于 serverAddress 自动登录。",
+                     "场景：另一台/本机客户端开单人世界→对局域网开放，AI 客户端自动连入。",
+                     "公告仅被动接收不发送；断开或世界关闭后回到主界面继续等待。默认 false。⚡即时生效")
+            .define("lanAutoJoin", false);
+
     // 注：apiKey / model 的**配置项键名**沿用 v0.1（apiKey、model），
     //     新的通用 API 配置段（v0.3）里复用这两个键，避免已生成的 toml 失效。
 
@@ -418,6 +425,14 @@ public final class AiPlayerConfig {
             return Math.max(1, AUTO_CONNECT_MAX_ATTEMPTS.get());
         } catch (Throwable t) {
             return 2;
+        }
+    }
+
+    public static boolean lanAutoJoin() {
+        try {
+            return LAN_AUTO_JOIN.get();
+        } catch (Throwable t) {
+            return false;
         }
     }
 

@@ -2,7 +2,6 @@
   "aiplayer.configuration.title": "AI Player 配置",
   "aiplayer.configuration.section.aiplayer.common.toml": "AI Player 配置",
   "aiplayer.configuration.section.aiplayer.common.toml.title": "AI Player 配置",
-
   "aiplayer.configuration.enabled": "启用 AI 模块",
   "aiplayer.configuration.enabled.tooltip": "总开关。关掉后 AI 模块完全不启动，游戏保持原样（出事时的第一道闸）。↻改动需重启客户端完全生效",
   "aiplayer.configuration.brainEnabled": "启用大脑（LLM 决策循环）",
@@ -25,7 +24,6 @@
   "aiplayer.configuration.logKeepDays.tooltip": "⚠当前版本未接线，修改无效：日志清理由 sidecar agent 负责",
   "aiplayer.configuration.verbose": "详细日志",
   "aiplayer.configuration.verbose.tooltip": "开启后客户端就绪等信息写入游戏日志。⚡即时生效",
-
   "aiplayer.configuration.controlEnabled": "内嵌控制服务开关",
   "aiplayer.configuration.controlEnabled.tooltip": "8780 控制面（agent 驱动游戏的 HTTP 通道，含 /state /chat /actions 等）。↻需重启客户端",
   "aiplayer.configuration.controlHost": "控制服务监听地址",
@@ -36,7 +34,6 @@
   "aiplayer.configuration.controlToken.tooltip": "非空时请求必须带请求头 X-AI-Token；仅监听回环地址时留空够用，对外发布建议设置。⚡即时生效",
   "aiplayer.configuration.shutdownMessage": "关闭时的服务器播报（留空=不播报）",
   "aiplayer.configuration.shutdownMessage.tooltip": "正常退出时自动向服务器说的话。★单条 ≤100 字：服务端聊天硬限制，超长直接截断，@提及渲染还会加字符（≤90 最稳）。⚡即时生效",
-
   "aiplayer.configuration.networkEnabled": "网络访问总闸（调 LLM 需要）",
   "aiplayer.configuration.networkEnabled.tooltip": "内置 AI 的出站网络总闸。关掉后 llm_chat/llm_ping 直接拒绝，游戏本体不受影响。⚡即时生效",
   "aiplayer.configuration.apiProvider": "API 服务商",
@@ -59,7 +56,6 @@
   "aiplayer.configuration.apiTemperature.tooltip": "-1 = 不发给服务端（用服务端默认）。范围 -1.0 ~ 2.0。⚡即时生效",
   "aiplayer.configuration.apiMaxTokens": "单次最大输出 token（0=不限）",
   "aiplayer.configuration.apiMaxTokens.tooltip": "0 = 不限制。推理模型的思考也占 token，不宜过小。⚡即时生效",
-
   "aiplayer.configuration.permissions.fileMode": "【权限】文件访问模式",
   "aiplayer.configuration.permissions.fileMode.tooltip": "full = 读写 | readonly = 只读 | off = 完全禁用。装配期生效：被禁的动作直接从注册表摘掉，模型看不到该能力，不会浪费轮次去试。⚡即时热切换",
   "aiplayer.configuration.permissions.commandEnabled": "【权限】允许 /命令动作",
@@ -68,7 +64,6 @@
   "aiplayer.configuration.permissions.selfToolEnabled.tooltip": "开启后才注册 tool_run：agent 可把已有动作串成宏批量跑。安全边界：步骤须在当前注册表内（权限表自动级联）/ 禁嵌套 tool_run / ≤64 步。⚡即时热切换",
   "aiplayer.configuration.permissions.gameActionMode": "【权限】游戏内动作模式",
   "aiplayer.configuration.permissions.gameActionMode.tooltip": "full = 全部动作 | safe = 摘掉改变游戏状态的输入类动作（press/keys/click_slot/cont_button/screen_click*）| observe = 再摘掉 move/jump/sneak，纯观察+问答。⚡即时热切换",
-
   "aiplayer.configuration.sidecar.enabled": "【sidecar】启用外挂 agent 进程",
   "aiplayer.configuration.sidecar.enabled.tooltip": "开启后首次启动把内置 agent 包解压部署到 <游戏目录>/aiplayer-agent/<版本>/（升级保留 keys.yaml/config/logs）。★★双客户端注意：观看端也装本 mod 时务必只在 AI 端开，否则各自拉起一份 agent。↻需重启客户端",
   "aiplayer.configuration.sidecar.deployDir": "【sidecar】部署目录",
@@ -80,5 +75,7 @@
   "aiplayer.configuration.sidecar.pythonPath": "【sidecar】python 解释器",
   "aiplayer.configuration.sidecar.pythonPath.tooltip": "裸程序名（走 PATH）或绝对路径。↻需重启客户端",
   "aiplayer.configuration.sidecar.watchdogInterval": "【sidecar】看门狗探活间隔（秒，0=关）",
-  "aiplayer.configuration.sidecar.watchdogInterval.tooltip": "探活失败自动重启 agent（带退避，上限 60s）。范围 0-3600。↻需重启客户端"
+  "aiplayer.configuration.sidecar.watchdogInterval.tooltip": "探活失败自动重启 agent（带退避，上限 60s）。范围 0-3600。↻需重启客户端",
+  "aiplayer.configuration.lanAutoJoin": "【高级联机】局域网世界自动加入",
+  "aiplayer.configuration.lanAutoJoin.tooltip": "主界面时监听 MC 局域网世界广播（多播 224.0.2.60:4445），发现「对局域网开放」的世界后自动加入，优先于 serverAddress 自动登录。被动收包不发送。默认关。⚡即时生效"
 }

@@ -42,6 +42,7 @@ public class AiPlayerClient {
                 return;
             }
             ChatBuffer.init();
+            LanDiscovery.start();   // LAN 世界广播监听（被动收包；lanAutoJoin 总闸在 tick 侧）
 
             if (AiPlayerConfig.controlEnabled()) {
                 // ★不要在主线程里起服务：绑定端口是 IO，放到独立线程，失败也不影响游戏启动
@@ -71,23 +72,22 @@ public class AiPlayerClient {
         }
     }
 
-    // ---------------- 自动登录 / 自动重连（0.2.1.20；0.2.1.25 加次数上限） ----------------
-    // 场景：无人值守的 AI 客户端，启动后应自己进服；服务器崩了也要能自己回去。
-    // 规则：serverAddress 非空才动作；主菜单→按 autoLogin 连；断线界面→按 autoReconnect 连。
-    // 两次连接之间至少间隔 reconnectDelaySec 秒，避免服务器宕机时疯狂刷连接。
-    // ★0.2.1.25：自动连接次数上限 = 配置项 autoConnectMaxAttempts（默认 2，模组设置可调）——
-    //   同一进程内累计，成功进世界后重置；用尽后断开界面自动回主界面，不再自动连接。
+    // ---------------- 自动登录 / 自动重连 / LAN 自动加入（0.2.1.20→0.2.1.26） ----------------
+    // 场景：无人值守的 AI 客户端，启动后应自己进服；服务器崩了也要能自己回去；
+    //       另一客户端「对局域网开放」时能自动发现并加入（高级联机，0.2.1.26）。
+    // 规则：①LAN 优先——lanAutoJoin 开且收到新鲜广播 → 直接加入；②serverAddress——
+    //       主菜单→按 autoLogin 连；断线界面→按 autoReconnect 连。
+    // 两次连接之间至少间隔 reconnectDelaySec 秒；次数上限 autoConnectMaxAttempts
+    // （默认 2，成功进世界后重置；用尽断开界面→回主界面不再连）。
+    // ★0.2.1.26：serverAddress 热改 → 自动清零尝试次数（改完地址立刻可重连，无需重启）。
     private static volatile long nextConnectAtMs = 0L;
     private static volatile int autoConnectAttempts = 0;
+    private static volatile String lastSeenAddr = null;   // serverAddress 热改检测基线
 
     @SubscribeEvent
     static void onClientTick(net.neoforged.neoforge.client.event.ClientTickEvent.Post event) {
         try {
             if (!AiPlayerConfig.enabled()) {
-                return;
-            }
-            String addr = AiPlayerConfig.serverAddress();
-            if (addr == null || addr.isBlank()) {
                 return;
             }
             Minecraft mc = Minecraft.getInstance();
@@ -108,12 +108,45 @@ public class AiPlayerClient {
                 return;                  // 其它界面（设置/服务器列表…）交给人工或 agent
             }
             int maxAttempts = AiPlayerConfig.autoConnectMaxAttempts();
+            long now = System.currentTimeMillis();
+            boolean rateOk = now >= nextConnectAtMs;
+
+            // ---- ①LAN 自动加入（优先于 serverAddress；title/断开界面都允许——被踢后 LAN 世界
+            //      还开着就重进；公告超过 30s 视为世界已关闭）----
+            if (AiPlayerConfig.lanAutoJoin()) {
+                String lan = LanDiscovery.fresh(30_000);
+                if (lan != null && autoConnectAttempts < maxAttempts && rateOk) {
+                    nextConnectAtMs = now + AiPlayerConfig.reconnectDelaySec() * 1000L;
+                    autoConnectAttempts++;
+                    if (startConnect(mc, scr, lan)) {
+                        AiPlayer.LOG.info("[AI Player] 发现 LAN 世界，自动加入({}, 第 {}/{} 次): {}",
+                                disconnected ? "重连" : "加入", autoConnectAttempts, maxAttempts, lan);
+                        return;
+                    }
+                }
+            }
+
+            // ---- ②serverAddress 自动登录/重连 ----
+            String addr = AiPlayerConfig.serverAddress();
+            if (addr == null || addr.isBlank()) {
+                return;
+            }
+            String target = addr.trim();
+            if (!target.equals(lastSeenAddr)) {
+                // 地址热改 → 重置预算（改完地址立刻可重连，无需重启客户端）
+                if (lastSeenAddr != null && autoConnectAttempts != 0) {
+                    AiPlayer.LOG.info("[AI Player] serverAddress 变更（{} → {}）：自动连接次数已重置（原 {} 次）",
+                            lastSeenAddr, target, autoConnectAttempts);
+                    autoConnectAttempts = 0;
+                }
+                lastSeenAddr = target;
+            }
             if (autoConnectAttempts >= maxAttempts) {
                 // 次数用尽：断开界面→自动回主界面并停止自动连接；主界面→静默不再连
                 if (disconnected) {
                     mc.setScreen(new net.minecraft.client.gui.screens.TitleScreen());
                     AiPlayer.LOG.info("[AI Player] 自动连接已满 {} 次均失败，返回主界面，不再自动连接"
-                                    + "（重启客户端重置计数；或调大 autoConnectMaxAttempts）",
+                                    + "（重启客户端重置计数；改 serverAddress 或调大 autoConnectMaxAttempts 亦可）",
                             maxAttempts);
                 }
                 return;
@@ -124,13 +157,27 @@ public class AiPlayerClient {
             if (disconnected && !AiPlayerConfig.autoReconnect()) {
                 return;
             }
-            long now = System.currentTimeMillis();
-            if (now < nextConnectAtMs) {
+            if (!rateOk) {
                 return;
             }
             nextConnectAtMs = now + AiPlayerConfig.reconnectDelaySec() * 1000L;
             autoConnectAttempts++;
-            String target = addr.trim();
+            if (startConnect(mc, scr, target)) {
+                AiPlayer.LOG.info("[AI Player] 自动连接服务器({}, 第 {}/{} 次): {}",
+                        disconnected ? "重连" : "登录", autoConnectAttempts, maxAttempts, target);
+            }
+        } catch (Throwable t) {
+            // 自动连接失败绝不能影响游戏
+            AiPlayer.LOG.warn("[AI Player] 自动连接失败（不影响游戏）: {}", t.toString());
+        }
+    }
+
+    /** 解析并启动连接（★主线程调用）。返回 false=未启动（已在世界/地址非法）。 */
+    private static boolean startConnect(Minecraft mc, net.minecraft.client.gui.screens.Screen scr, String target) {
+        if (mc.player != null || target == null || target.isBlank()) {
+            return false;
+        }
+        try {
             net.minecraft.client.multiplayer.resolver.ServerAddress sa =
                     net.minecraft.client.multiplayer.resolver.ServerAddress.parseString(target);
             net.minecraft.client.multiplayer.ServerData sd =
@@ -138,12 +185,45 @@ public class AiPlayerClient {
                             net.minecraft.client.multiplayer.ServerData.Type.OTHER);
             net.minecraft.client.gui.screens.ConnectScreen.startConnecting(
                     scr, mc, sa, sd, false, null);
-            AiPlayer.LOG.info("[AI Player] 自动连接服务器({}, 第 {}/{} 次): {}",
-                    disconnected ? "重连" : "登录", autoConnectAttempts, maxAttempts, target);
+            return true;
         } catch (Throwable t) {
-            // 自动连接失败绝不能影响游戏
-            AiPlayer.LOG.warn("[AI Player] 自动连接失败（不影响游戏）: {}", t.toString());
+            AiPlayer.LOG.warn("[AI Player] 连接启动失败: {}", t.toString());
+            return false;
         }
+    }
+
+    /**
+     * connect 动作入口（★由 ControlServer 派发，已在主线程）。
+     *
+     * @param addr 目标地址 "ip:port"；null/空 = 使用配置的 serverAddress
+     * @return JSON 结果
+     */
+    public static String requestConnect(String addr) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null) {
+            return Json.obj(Json.kv("ok", Json.bool(false)), Json.kv("error", Json.str("客户端未就绪")));
+        }
+        if (mc.player != null) {
+            return Json.obj(Json.kv("ok", Json.bool(false)),
+                    Json.kv("error", Json.str("已在世界中（先退出再连接）")));
+        }
+        String target = (addr == null || addr.isBlank())
+                ? (AiPlayerConfig.serverAddress() == null ? "" : AiPlayerConfig.serverAddress().trim())
+                : addr.trim();
+        if (target.isBlank()) {
+            return Json.obj(Json.kv("ok", Json.bool(false)),
+                    Json.kv("error", Json.str("未提供 address 且 serverAddress 为空")));
+        }
+        autoConnectAttempts = 0;    // 手动连接不占自动预算，且给后续自动连接重开预算
+        nextConnectAtMs = System.currentTimeMillis() + AiPlayerConfig.reconnectDelaySec() * 1000L;
+        net.minecraft.client.gui.screens.Screen scr = mc.screen != null
+                ? mc.screen : new net.minecraft.client.gui.screens.TitleScreen();
+        boolean ok = startConnect(mc, scr, target);
+        AiPlayer.LOG.info("[AI Player] connect 动作: {} → {}", target, ok ? "已发起" : "失败");
+        return Json.obj(
+                Json.kv("ok", Json.bool(ok)),
+                Json.kv("connecting", Json.str(target)),
+                Json.kv("attempts_reset", Json.bool(true)));
     }
 
     /** 聊天栏采集：进缓冲并落盘，供 {@code GET /chat?since=} 与大脑做"只注入新消息"。 */

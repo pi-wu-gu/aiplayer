@@ -2,7 +2,6 @@
   "aiplayer.configuration.title": "AI Player Configs",
   "aiplayer.configuration.section.aiplayer.common.toml": "AI Player Configs",
   "aiplayer.configuration.section.aiplayer.common.toml.title": "AI Player Configs",
-
   "aiplayer.configuration.enabled": "Enable AI Module",
   "aiplayer.configuration.enabled.tooltip": "Master switch. Off = AI module never starts, game stays vanilla (first gate when things break). Restart required",
   "aiplayer.configuration.brainEnabled": "Enable Brain (LLM decision loop)",
@@ -25,7 +24,6 @@
   "aiplayer.configuration.logKeepDays.tooltip": "WARNING: not wired in this version, has no effect. Log cleanup is handled by the sidecar agent",
   "aiplayer.configuration.verbose": "Verbose Logging",
   "aiplayer.configuration.verbose.tooltip": "Logs extra info (client ready, etc.) to the game log. Applies instantly",
-
   "aiplayer.configuration.controlEnabled": "Embedded Control Server",
   "aiplayer.configuration.controlEnabled.tooltip": "Port 8780 control plane (HTTP channel the agent uses to drive the game: /state /chat /actions ...). Restart required",
   "aiplayer.configuration.controlHost": "Control Server Host",
@@ -36,7 +34,6 @@
   "aiplayer.configuration.controlToken.tooltip": "When set, requests must carry the X-AI-Token header. Empty is fine for loopback only; set it before exposing. Applies instantly",
   "aiplayer.configuration.shutdownMessage": "Shutdown Announcement (blank = none)",
   "aiplayer.configuration.shutdownMessage.tooltip": "Auto-sent to the server on a clean exit. Max ~100 chars: server chat truncates longer messages, and @mention rendering adds characters (<=90 is safest). Applies instantly",
-
   "aiplayer.configuration.networkEnabled": "Network Access (required for LLM)",
   "aiplayer.configuration.networkEnabled.tooltip": "Outbound network gate for the built-in AI. Off = llm_chat/llm_ping rejected; the game itself is unaffected. Applies instantly",
   "aiplayer.configuration.apiProvider": "API Provider",
@@ -59,7 +56,6 @@
   "aiplayer.configuration.apiTemperature.tooltip": "-1 = do not send (use server default). Range -1.0 ~ 2.0. Applies instantly",
   "aiplayer.configuration.apiMaxTokens": "Max Output Tokens (0 = unlimited)",
   "aiplayer.configuration.apiMaxTokens.tooltip": "0 = unlimited. Reasoning models also spend tokens on thinking, do not set too small. Applies instantly",
-
   "aiplayer.configuration.permissions.fileMode": "[Perm] File Access Mode",
   "aiplayer.configuration.permissions.fileMode.tooltip": "full = read/write | readonly = read-only | off = disabled. Applied at assembly: gated actions are removed from the registry, so the model cannot see or waste rounds on them. Hot-swappable instantly",
   "aiplayer.configuration.permissions.commandEnabled": "[Perm] Allow /command Action",
@@ -68,7 +64,6 @@
   "aiplayer.configuration.permissions.selfToolEnabled.tooltip": "When on, registers tool_run: the agent can chain existing actions into macros. Guardrails: steps must exist in the current registry (permission cascade) / no nested tool_run / <=64 steps. Hot-swappable instantly",
   "aiplayer.configuration.permissions.gameActionMode": "[Perm] In-game Action Mode",
   "aiplayer.configuration.permissions.gameActionMode.tooltip": "full = all actions | safe = removes state-changing inputs (press/keys/click_slot/cont_button/screen_click*) | observe = also removes move/jump/sneak, pure observation + Q&A. Hot-swappable instantly",
-
   "aiplayer.configuration.sidecar.enabled": "[Sidecar] Enable Agent Process",
   "aiplayer.configuration.sidecar.enabled.tooltip": "On first start, deploys the bundled agent to <gamedir>/aiplayer-agent/<version>/ (upgrades keep keys.yaml/config/logs). Dual-client warning: if the viewer client also has this mod, enable it ONLY on the AI client, otherwise two agents run. Restart required",
   "aiplayer.configuration.sidecar.deployDir": "[Sidecar] Deploy Directory",
@@ -80,5 +75,7 @@
   "aiplayer.configuration.sidecar.pythonPath": "[Sidecar] Python Interpreter",
   "aiplayer.configuration.sidecar.pythonPath.tooltip": "Bare program name (via PATH) or absolute path. Restart required",
   "aiplayer.configuration.sidecar.watchdogInterval": "[Sidecar] Watchdog Interval (sec, 0=off)",
-  "aiplayer.configuration.sidecar.watchdogInterval.tooltip": "Restarts the agent on failed health checks (exponential backoff, capped at 60s). Range 0-3600. Restart required"
+  "aiplayer.configuration.sidecar.watchdogInterval.tooltip": "Restarts the agent on failed health checks (exponential backoff, capped at 60s). Range 0-3600. Restart required",
+  "aiplayer.configuration.lanAutoJoin": "[Net] Auto-join LAN worlds",
+  "aiplayer.configuration.lanAutoJoin.tooltip": "While on the title screen, listen for Minecraft LAN announcements (multicast 224.0.2.60:4445) and auto-join a discovered open-to-LAN world (takes priority over serverAddress). Passive listener. Default off. Applies instantly"
 }

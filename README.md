@@ -149,7 +149,7 @@
 - **目标框选取优先级**：`index`（get_screen 的控件序号 i）> `x,y` 命中 > 当前焦点 > 界面第一个 EditBox
 - **通用**：维度网络搜索框 / JEI 搜索 / 告示牌与书魔命名框都走同一条路
 
-**动作名 68 个（含别名）/ 实现 42 个。**（该版本时点数；v0.2.1.24 起为 77/46，selfToolEnabled 开时 79/47）
+**动作名 68 个（含别名）/ 实现 42 个。**（该版本时点数；v0.2.1.26 起为 78/47，selfToolEnabled 开时 80/48）
 
 ### 截图（0.2.1.4）
 
@@ -330,7 +330,7 @@ bot 身边没人时列表为空，曾被误读成"服务器没人、某玩家不
 | 内嵌 HTTP 服务 | ✅ `http://127.0.0.1:8780`（只用 `java.base`，无外部依赖、无嵌套 jar） |
 | `GET /state` | ✅ 实时返回 坐标/血量/饥饿/维度/游戏模式/时间/手持/视线方块/附近玩家/聊天尾 |
 | `GET /chat?since=&limit=` | ✅ 单调 id + 落盘（`aiplayer/chat/chat_log.jsonl`），支持"只取新消息"游标 |
-| `GET /actions` | ✅ 77 个动作名（含别名）/ 46 个实现（按类分组，自省用；当前 selfToolEnabled=false，开则 79/47） |
+| `GET /actions` | ✅ 78 个动作名（含别名）/ 47 个实现（按类分组，自省用；当前 selfToolEnabled=false，开则 80/48） |
 | `POST /command` | ✅ `{"commands":[{...}]}`，**逐条在主线程执行并等完成**，单条与批量都通 |
 | `say` 真实送达 | ✅ 游戏内确实出现 `[world] <<BOT_NAME>>: ...` |
 | `find_block`（地形工具） | ✅ 搜到 2 个石碑、最近 (202,77,-1117) 距离 8，**reads 12701 / 5 ms**（JsMacros 版同参数 208 ms） |
@@ -458,7 +458,7 @@ aiplayer/
 │   ├── AiPlayerConfig.java    # ModConfigSpec 用户配置
 │   ├── AiPlayerPaths.java     # <gamedir>/aiplayer/ 解析、骨架、原子写、实例锁
 │   ├── ControlServer.java     # 内嵌 HTTP 服务（/state /chat /actions /command /health /stats）
-│   ├── Actions.java           # 动作层（46 个实现 / 77 个名字，含别名；selfToolEnabled 开时 47/79）
+│   ├── Actions.java           # 动作层（47 个实现 / 78 个名字，含别名；selfToolEnabled 开时 48/80）
 │   ├── ChatBuffer.java        # 聊天缓冲（单调 id + 落盘）
 │   └── Json.java              # JSON 输出辅助
 ├── src/main/resources/assets/aiplayer/lang/   # en_us / zh_cn

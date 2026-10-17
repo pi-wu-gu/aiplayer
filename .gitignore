@@ -38,3 +38,6 @@ run/
 **/src/generated/**/.cache/
 repo/
 !**/src/**/repo/
+
+### CI 暂缺（workflow scope 未授权，文件保留在磁盘）###
+.github/
