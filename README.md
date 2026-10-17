@@ -388,8 +388,8 @@ cd "<MOD_REPO>"
 
 对外部环境的要求：**Java 21 + NeoForge 1.21.1**。不需要 JsMacros；Python 也不用自备——
 jar 内嵌 **Windows 版** sidecar agent 运行时（首次运行自动解压到游戏目录并拉起）。
-Linux/macOS 用户或想改 agent 源码时，才需要自备 Python 3.13+ 并从 `aiplayer-agent`
-源码仓库（当前为私有仓库）运行 `run.py`。
+Linux/macOS 用户或想改 agent 源码时，才需要自备 Python 3.13+ 并从
+[aiplayer-agent](https://github.com/pi-wu-gu/aiplayer-agent) 仓库运行 `run.py`。
 
 开源协议：[MIT](LICENSE)（`TEMPLATE_LICENSE.txt` 为 NeoForged MDK 模板自带，覆盖模板文件）。
 
