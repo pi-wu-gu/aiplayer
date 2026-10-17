@@ -225,6 +225,7 @@ final class Actions {
         register("block_at", Actions::blockAt);
         register("blockstate", Actions::blockState, "block_state");
         register("sign_edit", Actions::signEdit, "sign");
+        register("sign_read", Actions::signRead, "sign_text");
         register("scan_region", Actions::scanRegion);
         register("find_block", Actions::findBlock, "search_block", "nearest_block");
         register("get_inventory", Actions::inventory, "inv_query");
@@ -558,6 +559,57 @@ final class Actions {
     }
 
     /** 高级联机（0.2.1.26）：connect {address:"ip:port"} 或 {} 用配置地址——立即发起连接并清零自动连接预算。 */
+    /**
+     * 告示牌读文本（v0.2.1.32）：读取正反两面 4 行文本 + 颜色 + 辉光标志 + 涂蜡状态。
+     * 文本存于告示牌方块实体（SignBlockEntity.frontText/backText，各含 messages[4]/
+     * color/hasGlowingText），服务端经 ClientboundBlockEntityDataPacket 全量同步到客户端——
+     * **读已加载区块内的任意告示牌无需靠近**（无交互距离限制，读的是客户端方块实体）。
+     * 辉光文字只是 SignText.hasGlowingText 标志（渲染加描边），存储无特殊性。
+     */
+    private static String signRead(JsonObject par) {
+        LocalPlayer p = requirePlayer();
+        BlockPos pos;
+        double dx = Json.optDouble(par, "x", Double.NaN);
+        if (!Double.isNaN(dx)) {
+            int y = (int) Math.floor(Json.optDouble(par, "y", Double.NaN));
+            int z = (int) Math.floor(Json.optDouble(par, "z", Double.NaN));
+            if (Double.isNaN(y + z)) {
+                return "sign_err: 指定坐标需同时给 x/y/z";
+            }
+            pos = new BlockPos((int) Math.floor(dx), y, z);
+        } else {
+            HitResult hit = p.pick(6.0, 0.0f, false);
+            if (!(hit instanceof BlockHitResult bhr)) {
+                return "sign_err: 准星未指向方块（先 look 对准告示牌，或用 x/y/z 指定坐标）";
+            }
+            pos = bhr.getBlockPos();
+        }
+        BlockEntity be = p.level().getBlockEntity(pos);
+        if (!(be instanceof SignBlockEntity sign)) {
+            return "sign_err: 目标不是告示牌（" + pos.toShortString()
+                    + "）；若坐标很远请确认区块已加载（bot 附近）";
+        }
+        return Json.obj(
+                Json.kv("action", Json.str("sign_read")),
+                Json.kv("pos", Json.arr(List.of(Json.num(pos.getX()), Json.num(pos.getY()), Json.num(pos.getZ())))),
+                Json.kv("waxed", Json.bool(sign.isWaxed())),
+                Json.kv("front", signSide(sign, true)),
+                Json.kv("back", signSide(sign, false)));
+    }
+
+    /** 单面文本 JSON：lines 4 行纯文本 + color（染色）+ glowing（辉光标志）。 */
+    private static String signSide(SignBlockEntity sign, boolean front) {
+        net.minecraft.world.level.block.entity.SignText t = sign.getText(front);
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            lines.add(Json.str(t.getMessage(i, false).getString()));
+        }
+        return Json.obj(
+                Json.kv("lines", Json.arr(lines)),
+                Json.kv("color", Json.str(t.getColor().getName())),
+                Json.kv("glowing", Json.bool(t.hasGlowingText())));
+    }
+
     /**
      * 告示牌写文本（v0.2.1.31）：一次动作写 4 行，替代逐键打字。
      * ★服务端只接受「编辑器打开状态」下的更新包（SignBlockEntity.updateSignText 校验
