@@ -386,7 +386,12 @@ cd "<MOD_REPO>"
 2. 启动游戏 → 首次运行会在游戏目录生成 `aiplayer/`
 3. 需要时在「模组 → AI Player → 配置」里填服务器地址 / API Key / 开关
 
-对外部环境的要求：**Java 21 + NeoForge 1.21.1**。不需要 JsMacros，也不需要 Python（大脑里程碑完成后）。
+对外部环境的要求：**Java 21 + NeoForge 1.21.1**。不需要 JsMacros；Python 也不用自备——
+jar 内嵌 **Windows 版** sidecar agent 运行时（首次运行自动解压到游戏目录并拉起）。
+Linux/macOS 用户或想改 agent 源码时，才需要自备 Python 3.13+ 并从 `aiplayer-agent`
+源码仓库（当前为私有仓库）运行 `run.py`。
+
+开源协议：[MIT](LICENSE)（`TEMPLATE_LICENSE.txt` 为 NeoForged MDK 模板自带，覆盖模板文件）。
 
 ## 已踩的坑（实测记录）
 
