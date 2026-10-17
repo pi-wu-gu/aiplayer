@@ -43,7 +43,7 @@
   "aiplayer.configuration.apiKeyEnv": "API Key Env Var Name",
   "aiplayer.configuration.apiKeyEnv.tooltip": "Read the key from this env var first (avoids plaintext on disk); falls back to apiKey below. Applies instantly",
   "aiplayer.configuration.apiKey": "API Key (plaintext, prefer env)",
-  "aiplayer.configuration.apiKey.tooltip": "Prefer leaving empty and using the env var. The running sidecar agent uses its own key (PCL2/agent/config/keys.yaml), unrelated to this field; never echoed to logs. Applies instantly",
+  "aiplayer.configuration.apiKey.tooltip": "Prefer leaving empty and using the env var. The running sidecar agent uses its own key (<AGENT_REPO>/config/keys.yaml), unrelated to this field; never echoed to logs. Applies instantly",
   "aiplayer.configuration.model": "Model",
   "aiplayer.configuration.model.tooltip": "e.g. deepseek-flash. Applies instantly",
   "aiplayer.configuration.apiHeadersJson": "Extra Headers (JSON)",

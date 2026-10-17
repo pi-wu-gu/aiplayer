@@ -43,7 +43,7 @@
   "aiplayer.configuration.apiKeyEnv": "密钥环境变量名",
   "aiplayer.configuration.apiKeyEnv.tooltip": "★优先读这个环境变量取密钥（避免明文落盘），取不到才用下面的 apiKey。⚡即时生效",
   "aiplayer.configuration.apiKey": "API Key（明文，建议留空）",
-  "aiplayer.configuration.apiKey.tooltip": "★建议始终留空，走环境变量注入。当前实际运行的是 sidecar agent（密钥在 PCL2/agent/config/keys.yaml），与本项无关；日志永不回显该值。⚡即时生效",
+  "aiplayer.configuration.apiKey.tooltip": "★建议始终留空，走环境变量注入。当前实际运行的是 sidecar agent（密钥在 <AGENT_REPO>/config/keys.yaml），与本项无关；日志永不回显该值。⚡即时生效",
   "aiplayer.configuration.model": "模型名",
   "aiplayer.configuration.model.tooltip": "如 deepseek-flash。⚡即时生效",
   "aiplayer.configuration.apiHeadersJson": "额外请求头（JSON）",

@@ -80,6 +80,7 @@
 |---|---|---|
 | `turn` | `dyaw` `dpitch`（相对）或 `absolute:true` + `yaw` `pitch` | ✅ yaw 94.88→139.88、pitch -2.86→17.14，`/state` 复核一致 |
 | `look` | `x,y,z` 或 `yaw,pitch` | ✅ |
+| `look_lock`(别名 `lock_view` `aim_lock`) | `x,y,z` + `duration_ms`(≤60000，默认5000) + `face`(可选) + `target`/`target_type`(实体，0.2.1.37)；无参=查状态 | ✅ 见下文 0.2.1.35 / 0.2.1.36 / 0.2.1.37 |
 | `press` | `key`（绑定名或物理名） | ✅ `key.keyboard.e` 打开背包 |
 | `keys` | `keys[]` + `duration`(ms) | ✅ |
 | `move` | `forward/back/left/right/jump/sneak/sprint` 或 `dir`，+ `duration` | ✅ 1 秒前进约 3.5 格 |
@@ -185,8 +186,8 @@
 | `permissions.gameActionMode` | `full` / `safe` / `observe`（默认 full） | **v0.2.1.5 新增**：游戏内动作——`safe` 摘掉改世界/改物品的输入类（`press`/`keys`/`click_slot`/`cont_button`/`screen_click*`），`observe` 再摘掉 `move`/`jump`/`sneak` |
 | `networkEnabled`（既有键） | bool（默认 true） | 出站网络：`llm_chat` / `llm_ping` |
 
-**`gameActionMode` 的三档语义**（模组**没有** place/dig 动作——放方块/挖方块/攻击全都经 `press`/`keys` 触发，
-因此"世界修改"面就是输入类）：
+**`gameActionMode` 的三档语义**（dig(0.2.1.35)/place(0.2.1.39) 是 API 路径的改世界动作，与 press/keys 同轴被摘；
+其余"世界修改"面仍是输入类）：
 
 | 档位 | 保留 | 摘掉 |
 |---|---|---|
@@ -321,6 +322,141 @@ bot 身边没人时列表为空，曾被误读成"服务器没人、某玩家不
 
 ---
 
+### 挖掘 dig 与视角锁定 look_lock（0.2.1.35）
+
+**背景（2026-10-17 实锤的诊断）**：旧挖矿法是 `look` 瞄准 + `keys ["key.attack"]` 长按——
+即"注入真实按键等原版链路破坏方块"。实测**在窗口后台时零进度**：1.21.1
+`Minecraft.handleKeybinds()` 末尾四门禁（`screen==null && !flag2 && keyAttack.isDown() &&
+mouseHandler.isMouseGrabbed()`）中，`isMouseGrabbed` 依赖 `grabMouse()`，而 `grabMouse()` 前置
+`isWindowActive()`——**游戏窗口不是前台时静默 no-op**。四层证据（源码门禁 / 前台窗口=Explorer /
+物理鼠标微动 20px 摄像机零响应 / 排除项全清）见 `docs/记忆/2026-10-17-挖方块诊断.md`。
+**其他动作不受影响**是因为 `look/press/keys/move` 全是模组直设 `KeyMapping` 状态或发包，
+不过原版的"鼠标抓取"门禁。
+
+**新增动作 `dig`**（别名 `break` `mine`；受权限表第五轴管辖，`gameActionMode=safe` 起缺席）：
+
+```
+{"type":"dig","x":196,"y":77,"z":-1106,"timeout_ms":15000}
+→ {"ok":true,"result":"dig_started","block":"minecraft:oak_log","pos":[196,77,-1106],"timeout_ms":15000,
+   "hint":"破坏进行中（跨 tick 驱动）；必须轮询 dig_status 直至 dig_broken/dig_timeout/dig_failed 终态，勿重复发起"}
+```
+
+- **走 `MultiPlayerGameMode` 破坏 API**（`startDestroyBlock` + 每 tick `continueDestroyBlock`），
+  **不经按键注入链路** → 不受鼠标抓取/窗口前台门禁影响；`getDestroyStage()` 提供 0-9 进度
+- **三段式异步范式**（复用 sign_edit 的 pending 模式）：动作体只发起立即返回 →
+  `ClientTickEvent.Post` 每 tick 推进 → 终态写墓碑 + `ChatBuffer.add`（模型从聊天尾部可见）
+  （★为什么必须拆：`ControlServer.runOnClientThread` 把动作体放主线程并等返回，
+  动作体若阻塞等 tick 会死锁——tick 永不来）
+- **每 tick 复检**：玩家/世界丢失、死亡、界面打开、使用物品中、走出 6 格距离 → 立即失败并说明原因
+- **完成判定**：连续 3 tick 该位置为空气才算 `dig_broken`——客户端破块是先斩后奏（预测发包），
+  服务端可能驳回，单 tick 空气会误报
+- **超时报错附诊断**：`progress_stage=0` 且耗时明显低于徒手工时 → 工具不对（先 `select`）或
+  方块不可破坏（基岩/硬度-1）；进度有累积没到顶 → 加大 `timeout_ms`
+- `dig_status`（别名 `dig_state`；只读常驻）：idle / running（带 `progress_stage`）/ 终态墓碑
+  （附 `ended_age_ms` 防止模型拿陈旧结果误判）
+- `stop=true` 取消进行中的 dig
+
+**新增动作 `look_lock`**（别名 `lock_view` `aim_lock`；纯视角，与 look/turn 同权限待遇）：
+
+```
+{"type":"look_lock","x":196,"y":78,"z":-1106,"duration_ms":5000}
+→ {"ok":true,"result":"look_lock_started","aim":[196.0,78.0,-1106.0],"yaw":…,"pitch":…,"duration_ms":5000}
+```
+
+- 每 tick 重算眼睛→目标朝向并写 `yRot/xRot`（连带 `yRotO/xRotO` 防渲染插值抖动）；
+  玩家移动时自动跟随（解决"look 一次后边移动边对准"的漂移）
+- **中断检测**：本 tick 朝向 ≠ 上 tick 写入值（`Mth.wrapDegrees` 差值 > 0.05°）→ 立即结束并报告
+  `interrupted: 视角被外部操作改变(dyaw=…, dpitch=…)`——真实鼠标/look/turn/mouse_move 全覆盖；
+  `look`/`turn`/`mouse_move` 动作末尾还显式调用取消（原因更即时明确）
+- 到期 `duration_end`（非错误）；`look_lock` 无参查状态（running 带 `remaining_ms` / ended 带原因）
+- 整数坐标瞄方块中心（+0.5），小数坐标瞄原点点（与 `look` 语义一致）
+
+**look_lock 面锁定 `face`（0.2.1.36 新增，可选参数）**：
+
+```
+{"type":"look_lock","x":196,"y":76,"z":-1106,"face":"up","duration_ms":5000}
+→ {"ok":true,"result":"look_lock_started","aim":[196.5,77.0,-1105.5],"face":"up","yaw":…,"pitch":…}
+```
+
+- `face` 六选一：`up`/`down`/`north`/`south`/`east`/`west`（别名 `top`→up、`bottom`→down；
+  `center`/`auto`/省略=默认瞄方块中心）——把瞄准点从方块中心改为**该面的面中心**
+- ★**只对整数方块坐标有效**：小数坐标=精确点模式，与 face 二选一（同时给非 center 的 face 报错）
+- 典型用途：放置方块时锁定目标格**下方地板的顶面**（配合 `looking_at.face=="up"` 确认后 `key.use`）
+- 面中心偏移：up=(+.5,+1,+.5) / down=(+.5,0,+.5) / north=(+.5,+.5,0) / south=(+.5,+.5,+1)
+  / east=(+1,+.5,+.5) / west=(0,+.5,+.5)
+- 返回与状态查询均回显 `face` 字段；锁定维持/中断语义与无 face 时完全一致
+
+**look_lock 实体锁定 `target`（0.2.1.37 新增）**：
+
+```
+{"type":"look_lock","target":812,"duration_ms":5000}
+→ {"ok":true,"result":"look_lock_started","target":{"id":812,"type":"minecraft:skeleton","name":"Skeleton","aim":"center","dist":17.2},"yaw":…,"pitch":…}
+{"type":"look_lock","target_type":"minecraft:cow"}        ← 64 格内最近的一只
+{"type":"look_lock","target":812,"aim":"eyes"}            ← 瞄眼睛高度（默认 center=碰撞箱中心）
+```
+
+- `target`（实体 id，来自 `entities` 动作返回）或 `target_type`（类型 id）**二选一**，且与 `x,y,z`/`face`
+  **互斥**（实体没有面的概念；偏瞄用 `aim`）
+- 每 tick 按 id 重新取实体（`level.getEntity(id)`，不缓存实体对象防卸载/复用）并重算朝向——实体移动自动跟随
+- 结束条件新增：`target_lost: 实体消失或死亡` / `target_lost: 实体超距(>8 格)`
+- 典型用途：盯着生物/玩家持续对准（移动战）、警惕某个方向
+- 状态查询与墓碑回显 `target{id,type,aim}`
+
+**`entities` 输出实体 id + id 直锁类型回填（0.2.1.38 新增）**：
+
+```
+{"type":"entities"}
+→ [{"id":262134,"type":"minecraft:player","dist":7.4,"pos":[…]}, …]
+```
+
+- 背景：0.2.1.37 的 `target=<id>` 直锁模式的报错提示"先用 entities 拿有效 id"，
+  但 `entities` 当时**不返回 id**——模式实际不可用；本版补齐：每项新增 `id` 字段（`e.getId()`）
+- 同时修复：`target=<id>` 启动时把实体真实类型回填进锁定任务（此前查询/墓碑回显 `type:"null"`）
+- 实测（0.2.1.38 补测）：`entities` 返回 id=262134（玩家 <PLAYER_A>）→ `look_lock target=262134`
+  直锁成功；无效 id 报 `look_lock_err: 找不到实体 id=999999（已卸载/超距/维度不同；先用 entities 动作拿有效 id）`
+
+**新增动作 `place` 放置方块（0.2.1.39）**：
+
+```
+{"type":"place","x":6,"y":71,"z":-14}
+→ {"ok":true,"result":"place_sent","item":"minecraft:dirt","target":[6,71,-14],
+   "support":[6,70,-14],"support_block":"minecraft:grass_block","face":"up","hand":"main",
+   "support_dist":1.2,"player":{"pos":[…],"aabb":[[…],[…]]},
+   "hint":"已发起…约 2-3 tick 后用 place_status 收确认，或 block_at 复核目标格"}
+{"type":"place_status"}
+→ {"ok":true,"result":"place_placed","landed":"minecraft:dirt","elapsed_ms":148,…}
+```
+
+- **背景（2026-10-17/18 实锤）**：旧放置法是 `look` 瞄准 + `keys ["key.use"]`——实测**窗口非前台时
+  完全失效**（`press`/`keys`/物理名/长按/look_lock 全试过）。根因：use 键依赖的 `mc.hitResult`
+  与 `looking_at`（模组自算 `p.pick(6.0,0,false)`）**不是一套**（相机插值/窗口状态耦合）；
+  对照实验 `press key.inventory` 能正常开背包，说明 `KeyMapping.click` 机制本身没问题——是
+  use 这条链路不可靠。与 dig 同源同解：改走 **`MultiPlayerGameMode.useItemOn` 发包路径**
+  （与真实玩家右键同一条链路，服务端照常跑事件/保护/距离/碰撞校验）
+- **两段式协议**（同 dig）：`place` 立即返回 `place_sent` → 约 3 tick 后自动确认 →
+  `place_status`（别名 `place_state`；只读常驻）查 `place_placed`（附 `landed` 落块 id）/
+  `place_failed`（附 `detail` 诊断）/ `place_unverified`；也可 `block_at` 复核。
+  ★禁止放置后不等确认就继续依赖该方块的操作
+- **★玩家碰撞箱约束（用户 2026-10-18 提醒后固化）**：玩家不是质点（AABB 宽 0.6 高 1.8）——
+  目标格与玩家身体重叠时服务端实体碰撞校验必然驳回。发起前**预检并直接报错**（错误里带
+  目标格/玩家双方 AABB 数值与脚底坐标），此时应 `move` 走开/跳起或换目标格，重试同一格无用。
+  实测场景：玩家脚底 y=71 时目标格 (6,71,-14) 与身体重叠 → 旧法（按键）与 API 路径都会失败
+- **支撑面自动选择**：省略 `side` 时按 下方地板(up) → 四周墙(north/south/east/west) → 上方天花板(down)
+  顺序找第一个可用支撑格（跳过空气/流体/无碰撞/带界面方块/常见交互方块），距离用服务端
+  `canInteractWithBlockAt` 同款尺子（脚底→支撑格底中心 ≤ `block_interaction_range`+1）；
+  `side=` 可显式指定被点击面（放置位 = 支撑格 + 该面方向）；响应回传 `support`/`face`/
+  `support_dist`/`support_interactive`（可交互支撑面会警告"右键可能先开界面"）
+- **发起前校验**（全部 `place_err:` 明确报错）：界面打开中 / 使用物品中 / 已死亡 /
+  手持非方块（回显当前手持）/ 物品冷却中 / 冒险·旁观模式 / 目标格已有方块（可替换物除外）/
+  支撑格是空气 / 支撑格超距
+- **失败诊断**（`place_status` 的 `detail`）：手持已变/冷却中/模式不允许/界面开着/支撑格被挖/
+  支撑面带界面/玩家放置期间挪进目标格/服务端驳回（距离·碰撞·保护·特殊放置规则）
+
+**配套 `state()` 新诊断字段**（0.2.1.35）：`window_active`（游戏窗口是否前台）/
+`mouse_grabbed`（鼠标是否被游戏抓取）——排查"该生效却没反应"的怪现象先看这两个。
+
+---
+
 ## v0.2 —— 内嵌控制服务（已替代 Python 桥接）
 
 **v0.2 实测通过的内容**（同环境）：
@@ -332,7 +468,7 @@ bot 身边没人时列表为空，曾被误读成"服务器没人、某玩家不
 | `GET /chat?since=&limit=` | ✅ 单调 id + 落盘（`aiplayer/chat/chat_log.jsonl`），支持"只取新消息"游标 |
 | `GET /actions` | ✅ 78 个动作名（含别名）/ 47 个实现（按类分组，自省用；当前 selfToolEnabled=false，开则 80/48） |
 | `POST /command` | ✅ `{"commands":[{...}]}`，**逐条在主线程执行并等完成**，单条与批量都通 |
-| `say` 真实送达 | ✅ 游戏内确实出现 `[world] <<BOT_NAME>>: ...` |
+| `say` 真实送达 | ✅ 游戏内确实出现 `[world] <BOT_NAME>: ...` |
 | `find_block`（地形工具） | ✅ 搜到 2 个石碑、最近 (202,77,-1117) 距离 8，**reads 12701 / 5 ms**（JsMacros 版同参数 208 ms） |
 | `get_inventory` / `time` / `block_at` / `look` / `press` / `keys` / `entities` / `players` | ✅ 均可用 |
 
@@ -379,6 +515,23 @@ cd "<MOD_REPO>"
   - ★ `neo_version` 必须与目标整合包实际运行的 NeoForge 一致（当前整合包为 21.1.236）。
     编译版本比运行时新会在运行期抛 `NoSuchMethodError`。
 - 构建脚本里已配置国内可达的镜像源（`neoforged.forgecdn.net` 等），沿用 `testmod-template-1.21.1` 中已验证的配置。
+
+**★改了 agent 源码（`<AGENT_REPO>/`）之后的完整部署链（四步，缺一不可）**：
+
+```bash
+# 1) 重打 sidecar 包（含最新 core/tools 源码 + 内嵌运行时，自动跑 import 烟测）
+cd <AGENT_REPO> && python scripts/build_agent_bundle.py
+# 2) 送进模组资源目录（gradle 只认这里，不会自动去拉 agent 仓库）
+cp agent_bundle.zip "<MOD_REPO>/src/main/resources/assets/aiplayer/agent_bundle.zip"
+# 3) 构建 jar
+cd "<MOD_REPO>" && ./gradlew build
+# 4) 部署：复制 build/libs/aiplayer-<v>.jar 到 mods/（删旧版本 jar）→ 杀 supervisor 进程树 → 重启
+```
+
+⚠️ **只跑 `./gradlew build` 不会带上 agent 源码改动**——jar 内嵌的是 `assets/aiplayer/agent_bundle.zip`
+这个静态文件；2026-10-17 实测漏过这一步：提示词/工具描述改了没生效，daemon 跑的 sidecar 还是旧版
+（排查现象：`aiplayer-agent/<版本>/core/runner.py` 内容与 `<AGENT_REPO>/core/runner.py` 不一致）。
+验证方法：部署后对比两边文件的关键串（如 `grep -c look_lock <sidecar>/core/runner.py` 应 >0）。
 
 ## 安装（给别的整合包）
 

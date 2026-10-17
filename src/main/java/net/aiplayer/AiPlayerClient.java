@@ -96,6 +96,9 @@ public class AiPlayerClient {
                 return;
             }
             tickPendingSignEdit();           // sign_edit 延迟提交（有 pending 才做事）
+            Drivers.tickDig();               // v0.2.1.35：挖掘推进（有任务才做事）
+            Drivers.tickLookLock();          // v0.2.1.35：视角锁定维持/中断检测
+            Drivers.tickPlace();             // v0.2.1.39：放置落块确认（有任务才做事）
             if (mc.player != null) {
                 // 成功进过世界 → 重置自动连接预算（之后每次断线都重新有 maxAttempts 次机会）
                 if (autoConnectAttempts != 0) {

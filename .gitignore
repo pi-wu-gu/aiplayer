@@ -41,3 +41,18 @@ repo/
 
 ### CI 暂缺（workflow scope 未授权，文件保留在磁盘）###
 .github/
+
+### 脱敏：本机实例配置/密钥永不入库（2026-10-18）###
+keys.yaml
+**/keys.yaml
+!keys.yaml.example
+config/config.yaml
+!config/config.yaml.example
+*.local.yaml
+*.local.yml
+.secrets/
+logs/
+screenshots/
+
+### NeoForge MDK 模板原始备份（含本机用户名包名，不入库）###
+.template-original/

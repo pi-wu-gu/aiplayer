@@ -35,6 +35,7 @@ import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.multiplayer.PlayerInfo;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
@@ -153,8 +154,12 @@ final class Actions {
             "command", "cmd", "llm_chat", "llm", "llm_ping",
             // v0.2.1.10 sidecar：agent 进程启停与状态（受 [sidecar].enabled 管辖）
             "agent_status", "agent_start", "agent_run", "agent_stop", "agent_shutdown",
-            // v0.2.1.5 游戏内动作五轴：safe 摘输入/改物类，observe 再摘移动类
-            "press", "key", "keys", "hold_keys",
+        // v0.2.1.5 游戏内动作五轴：safe 摘输入/改物类，observe 再摘移动类
+        "press", "key", "keys", "hold_keys",
+        // v0.2.1.35 挖掘（改世界类，与 press/keys 同轴）
+        "dig", "break", "mine",
+        // v0.2.1.39 放置（改世界类，同轴）
+        "place", "place_block", "put_block",
             "click_slot", "slot_click", "cont_click", "cont_button", "menu_button",
             "screen_click", "screen_click_widget", "click_widget",
             "move", "jump", "sneak",
@@ -210,7 +215,8 @@ final class Actions {
         String fm = AiPlayerConfig.fileModeRaw();
         boolean netOk = AiPlayerConfig.networkEnabled();
         // v0.2.1.5 第五轴：游戏内动作模式。safe/observe 摘掉"改世界·改物品"的输入类；
-        //   observe 再摘掉移动类。（模组没有 place/dig 动作——放/挖/攻击全部走 press/keys）
+        //   observe 再摘掉移动类。（dig 0.2.1.35 / place 0.2.1.39 是 API 路径的改世界动作，同样摘；
+        //   两者的 status 查询是只读的，常驻）
         String gm = AiPlayerConfig.gameActionModeRaw();
         boolean gmSafe = !"full".equals(gm);
         boolean gmObserve = "observe".equals(gm);
@@ -235,6 +241,20 @@ final class Actions {
         register("get_inventory", Actions::inventory, "inv_query");
         register("look", Actions::look);
         register("turn", Actions::turn);
+        // v0.2.1.35：视角锁定（纯视角操作，与 look/turn 同待遇，不过权限轴）
+        register("look_lock", Actions::lookLock, "lock_view", "aim_lock");
+        // v0.2.1.35：挖掘——直接对坐标发包、不走按键注入链路（不受鼠标抓取门禁影响）。
+        //   改世界类 → 与 press/keys 同轴（safe 及以上摘掉）；dig_status 是只读查询，常驻。
+        if (!gmSafe) {
+            register("dig", Actions::dig, "break", "mine");
+        }
+        register("dig_status", Actions::digStatus, "dig_state");
+        // v0.2.1.39：放置——与 dig 同轴同思路：API 路径发包（useItemOn），不经按键注入链路
+        //   （按键放置在窗口非前台时完全失效，2026-10-17/18 实锤；place_status 只读，常驻）
+        if (!gmSafe) {
+            register("place", Actions::place, "place_block", "put_block");
+        }
+        register("place_status", Actions::placeStatus, "place_state");
         // 输入/按键：safe 及以上摘掉——放方块(key.use)/挖方块(key.attack)/攻击/开界面都经此路
         if (!gmSafe) {
             register("press", Actions::press, "key");
@@ -348,6 +368,13 @@ final class Actions {
         // v0.2.1.13 诊断字段（2026-10-16 事故修复：bot 开着物品栏 30 分钟、移动全废，
         // 旧版 state 无 screen 字段，agent 拿不到任何失败信号白烧 87 万 token）
         parts.add(Json.kv("screen", screenBrief()));
+        // v0.2.1.35 输入链路诊断（2026-10-17 挖方块失效根因实锤后的固化）：
+        //   window_active=false 时鼠标永远抓不起来 → keys key.attack 按住攻击必然零进度
+        //   （原版 continueAttack 四门禁之一就是 mouseHandler.isMouseGrabbed()）。
+        //   dig 动作不走这条路不受影响；用 keys 攻击前先看这两个字段。
+        parts.add(Json.kv("window_active", Json.bool(mc.isWindowActive())));
+        parts.add(Json.kv("mouse_grabbed",
+                Json.bool(mc.mouseHandler != null && mc.mouseHandler.isMouseGrabbed())));
         parts.add(Json.kv("onGround", Json.bool(p.onGround())));
         parts.add(Json.kv("sprinting", Json.bool(p.isSprinting())));
         parts.add(Json.kv("flying", Json.bool(p.getAbilities().flying)));
@@ -457,7 +484,8 @@ final class Actions {
         return Json.arr(out);
     }
 
-    private static String itemId(ItemStack st) {
+    /** 包级可见：{@link Drivers} 的 place 驱动器也要用（同包不同类）。 */
+    static String itemId(ItemStack st) {
         try {
             return BuiltInRegistries.ITEM.getKey(st.getItem()).toString();
         } catch (Exception e) {
@@ -465,7 +493,8 @@ final class Actions {
         }
     }
 
-    private static String blockId(BlockState st) {
+    /** 包级可见：{@link Drivers} 的 dig 驱动器也要用（同包不同类）。 */
+    static String blockId(BlockState st) {
         try {
             return BuiltInRegistries.BLOCK.getKey(st.getBlock()).toString();
         } catch (Exception e) {
@@ -1024,8 +1053,242 @@ final class Actions {
         }
         p.setYRot(yaw);
         p.setXRot(pitch);
+        Drivers.cancelLookLock("被 look 动作中断");
         return Json.obj(Json.kv("action", Json.str("look")),
                 Json.kv("yaw", Json.num(yaw)), Json.kv("pitch", Json.num(pitch)));
+    }
+
+    // ---------------------------------------------------------------- v0.2.1.35：dig / look_lock
+
+    /**
+     * 破坏指定坐标的方块（跨 tick 驱动，见 {@link Drivers}）。
+     *
+     * <p>★与 {@code keys key.attack} 的本质区别：本动作直接走
+     * {@code MultiPlayerGameMode.startDestroyBlock/continueDestroyBlock}，
+     * <b>不经过按键注入链路</b>——不受"鼠标未抓取/窗口未激活"门禁影响
+     * （2026-10-17 实锤：窗口失焦时按住攻击零进度，根因见
+     * {@code docs/记忆/2026-10-17-挖方块诊断.md}）。
+     *
+     * <p>协议：立即返回 {@code dig_started}，随后<b>必须轮询 {@code dig_status}**
+     * 直至 {@code dig_broken} / {@code dig_timeout} / {@code dig_failed} / {@code dig_cancelled} 终态。
+     * 超时会带进度(0-9)与原因报错给模型；{@code stop=true} 取消进行中的挖掘。
+     */
+    private static String dig(JsonObject par) {
+        if (Json.optBool(par, "stop", false) || Json.optBool(par, "cancel", false)) {
+            Drivers.cancelDig("模型主动取消");
+            return Json.obj(Json.kv("ok", Json.bool(true)),
+                    Json.kv("result", Json.str("dig_cancel_requested")),
+                    Json.kv("hint", Json.str("若确有任务在跑即已取消；用 dig_status 确认")));
+        }
+        requirePlayer();
+        double x = Json.optDouble(par, "x", Double.NaN);
+        double y = Json.optDouble(par, "y", Double.NaN);
+        double z = Json.optDouble(par, "z", Double.NaN);
+        if (Double.isNaN(x + y + z)) {
+            return "dig_err: 需要 x,y,z（方块坐标；或 stop=true 取消进行中的挖掘）";
+        }
+        long timeoutMs = Math.max(500, Math.min(Json.optInt(par, "timeout_ms", 15000), 25000));
+        BlockPos pos = new BlockPos((int) Math.floor(x), (int) Math.floor(y), (int) Math.floor(z));
+        return Drivers.startDig(pos, timeoutMs);
+    }
+
+    /** 查询挖掘任务状态（idle / running 带进度 / 终态原样返回）。 */
+    private static String digStatus(JsonObject par) {
+        return Drivers.digStatus();
+    }
+
+    // ---------------------------------------------------------------- v0.2.1.39：place 放置
+
+    /**
+     * 放置手持方块到指定空气格（API 路径，两段式协议，见 {@link Drivers#startPlace}）。
+     *
+     * <p>★与 {@code keys key.use} 的本质区别：走 {@code MultiPlayerGameMode.useItemOn}
+     * 发包路径，与真实玩家右键同一条链路，<b>不经按键注入</b>——不受"鼠标未抓取/窗口未激活"
+     * 门禁影响（2026-10-17/18 实锤：窗口非前台时按键放置完全失效，根因是 use 依赖的
+     * {@code mc.hitResult} 与 {@code looking_at} 的 {@code p.pick} 自算不是一套）。
+     *
+     * <p>协议：立即返回 {@code place_sent}，约 2-3 tick 后用 {@code place_status} 收确认
+     * （{@code place_placed} / {@code place_failed}+诊断 / {@code place_unverified}），
+     * 也可用 {@code block_at} 复核。<b>禁止放置后不等确认就继续依赖该方块的操作</b>。
+     *
+     * <p>★<b>玩家碰撞箱约束</b>（2026-10-18 固化）：玩家不是质点（AABB 宽 0.6 高 1.8），
+     * 目标格与玩家身体重叠时服务端必然驳回（实体碰撞校验）——发起前预检并直接报错，
+     * 错误里带双方 AABB 数值；此时应 move 走开/跳起或换目标格，重试同一格无用。
+     *
+     * <p>支撑面选择：省略 {@code side} 时自动选（优先目标格<b>下方地板</b>的顶面 →
+     * 四周邻格侧面 → 上方天花板底面；自动避开空气/流体/无碰撞/带界面方块/常见交互方块）；
+     * {@code side} 显式指定支撑方块被点击的那一面（放置位 = 支撑格 + 该面方向）。
+     */
+    private static String place(JsonObject par) {
+        double x = Json.optDouble(par, "x", Double.NaN);
+        double y = Json.optDouble(par, "y", Double.NaN);
+        double z = Json.optDouble(par, "z", Double.NaN);
+        if (Double.isNaN(x + y + z)) {
+            return "place_err: 需要 x,y,z（要放入方块的目标空气格坐标）";
+        }
+        Direction side = null;
+        String sidePar = Json.optString(par, "side", null);
+        if (sidePar != null && !sidePar.isBlank()) {
+            String f = normalizeFace(sidePar.trim().toLowerCase(Locale.ROOT));
+            if (f == null || "center".equals(f)) {
+                return "place_err: side 只认 up/down/north/south/east/west（别名 top/bottom）"
+                        + "——指支撑方块朝向目标格的那一面；省略=自动选（优先下方地板）";
+            }
+            side = switch (f) {
+                case "up" -> Direction.UP;
+                case "down" -> Direction.DOWN;
+                case "north" -> Direction.NORTH;
+                case "south" -> Direction.SOUTH;
+                case "east" -> Direction.EAST;
+                default -> Direction.WEST;
+            };
+        }
+        String handPar = Json.optString(par, "hand", "main");
+        String h = handPar == null ? "main" : handPar.trim().toLowerCase(Locale.ROOT);
+        InteractionHand hand = (h.equals("off") || h.equals("offhand") || h.equals("secondary") || h.equals("副手"))
+                ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
+        BlockPos target = new BlockPos((int) Math.floor(x), (int) Math.floor(y), (int) Math.floor(z));
+        return Drivers.startPlace(target, side, hand);
+    }
+
+    /** 查询上次放置的确认结果（idle / pending / placed / failed+诊断 / unverified）。 */
+    private static String placeStatus(JsonObject par) {
+        return Drivers.placeStatus();
+    }
+
+    /** 面名 → 面中心相对方块角点（整数坐标方块）的偏移。键为规范名（小写英文）。 */
+    private static final java.util.Map<String, double[]> FACE_OFFSETS = buildFaceOffsets();
+
+    private static java.util.Map<String, double[]> buildFaceOffsets() {
+        java.util.Map<String, double[]> m = new java.util.LinkedHashMap<>();
+        m.put("up", new double[] {0.5, 1.0, 0.5});
+        m.put("down", new double[] {0.5, 0.0, 0.5});
+        m.put("north", new double[] {0.5, 0.5, 0.0});
+        m.put("south", new double[] {0.5, 0.5, 1.0});
+        m.put("east", new double[] {1.0, 0.5, 0.5});
+        m.put("west", new double[] {0.0, 0.5, 0.5});
+        return java.util.Collections.unmodifiableMap(m);
+    }
+
+    /**
+     * face 参数归一化：{@code center}/{@code auto}（或省略）→ {@code center}；别名 {@code top}→{@code up}、
+     * {@code bottom}→{@code down}；未知值返回 {@code null}（调用方报错）。
+     */
+    private static String normalizeFace(String face) {
+        if (face == null || face.isBlank()) {
+            return "center";
+        }
+        String f = face.trim().toLowerCase(java.util.Locale.ROOT);
+        switch (f) {
+            case "center": case "auto": case "middle": return "center";
+            case "top": return "up";
+            case "bottom": return "down";
+            default: return FACE_OFFSETS.containsKey(f) ? f : null;
+        }
+    }
+
+    /**
+     * 视角锁定：每 tick 把视角压向指定方块中心/指定面中心/实体，限时；任何视角操作立即中断。
+     *
+     * <p>不带任何目标参数调用 = 查询当前/上次锁定状态（idle / running / ended+原因）。
+     * <p><b>face 参数（v0.2.1.36 新增，可选）</b>：{@code up/down/north/south/east/west}
+     * 六面之一（别名 {@code top/bottom}；{@code center/auto}=默认瞄方块中心）——
+     * <b>只对整数方块坐标有效</b>，把瞄准点从方块中心改为该面的面中心
+     * （典型用途：放置方块时锁定目标格<b>下方地板的顶面</b>，配合 {@code looking_at.face=="up"} 确认）。
+     * 小数坐标=精确点模式，与 face 二选一（同时给非 center 的 face 会报错）。
+     * <p><b>实体锁定（v0.2.1.37 新增）</b>：{@code target=<实体id>}（来自 entities 动作）或
+     * {@code target_type=<类型id，如 minecraft:cow>}（64 格内最近的一个）——二选一、与坐标/face 互斥。
+     * {@code aim=center}（碰撞箱中心，默认）/{@code eyes}（眼睛高度）。每 tick 跟随实体重算；
+     * 实体消失/死亡/超距 8 格 → {@code target_lost: ...} 结束（非错误）。典型用途：盯着生物/
+     * 玩家持续对准（比"look 一次然后它跑掉"可靠）。
+     * <p>中断语义（都算正常结束，向模型报原因而非错误）：
+     * <ul>
+     *   <li>{@code duration_end}——到达最大持续时间；</li>
+     *   <li>{@code interrupted: ...}——look/turn/mouse_move/真实鼠标移动等任何外部视角操作
+     *       （每 tick 比对"我们设定的朝向"与"当前朝向"，差值超阈值即判外部篡改）；</li>
+     *   <li>{@code aborted: ...}——玩家死亡/断线。</li>
+     * </ul>
+     */
+    private static String lookLock(JsonObject par) {
+        boolean hasCoord = par.has("x") || par.has("y") || par.has("z");
+        boolean hasTarget = par.has("target") || par.has("target_type");
+        if (!hasCoord && !hasTarget) {
+            return Drivers.lockStatus();   // 查询模式（离线也可查：返回 idle 或上次锁的墓碑）
+        }
+        LocalPlayer p = requirePlayer();
+        String face = normalizeFace(Json.optString(par, "face", null));
+        if (face == null) {
+            return "look_lock_err: face 只认 up/down/north/south/east/west"
+                    + "（或 center/auto=默认瞄中心；别名 top/bottom）";
+        }
+        long durationMs = Math.max(200, Math.min(Json.optInt(par, "duration_ms", 5000), 60000));
+        if (hasTarget) {
+            // 实体锁定模式（v0.2.1.37）：与坐标模式、face 互斥——实体没有"面"的概念
+            if (hasCoord) {
+                return "look_lock_err: target 与 x,y,z 互斥（锁实体或锁坐标二选一）";
+            }
+            if (!face.equals("center")) {
+                return "look_lock_err: face 与 target 互斥（实体没有面的概念；偏瞄用 aim=center/eyes）";
+            }
+            if (par.has("target") && par.has("target_type")) {
+                return "look_lock_err: target 与 target_type 互斥（按 id 锁定或按类型锁定二选一）";
+            }
+            Integer id = null;
+            if (par.has("target")) {
+                try {
+                    id = Integer.valueOf(Json.optString(par, "target", "").trim());
+                } catch (NumberFormatException e) {
+                    return "look_lock_err: target 只接受实体 id（整数，来自 entities 动作返回）；按类型锁定用 target_type";
+                }
+            }
+            String typeId = Json.optString(par, "target_type", null);
+            if (typeId != null) {
+                typeId = typeId.trim();
+                if (typeId.isEmpty()) {
+                    typeId = null;
+                }
+            }
+            if (id == null && typeId == null) {
+                return "look_lock_err: target_type 不能为空（形如 minecraft:cow）";
+            }
+            String aim = "center";
+            String aimPar = Json.optString(par, "aim", null);
+            if (aimPar != null && !aimPar.isBlank()) {
+                String a = aimPar.trim().toLowerCase(java.util.Locale.ROOT);
+                if (a.equals("center") || a.equals("eyes")) {
+                    aim = a;
+                } else {
+                    return "look_lock_err: aim 只认 center（碰撞箱中心，默认）/ eyes（眼睛高度）";
+                }
+            }
+            return Drivers.startLookLockEntity(p, id, typeId, aim, durationMs);
+        }
+        double x = Json.optDouble(par, "x", Double.NaN);
+        double y = Json.optDouble(par, "y", Double.NaN);
+        double z = Json.optDouble(par, "z", Double.NaN);
+        if (Double.isNaN(x + y + z)) {
+            return "look_lock_err: 需要 x,y,z（或省略参数查询当前锁定状态）";
+        }
+        // 整数坐标=方块坐标 → 瞄中心或指定面中心；小数坐标=精确点模式（不接受 face）
+        boolean blockMode = x == Math.floor(x) && y == Math.floor(y) && z == Math.floor(z);
+        double ax;
+        double ay;
+        double az;
+        if (blockMode) {
+            double[] off = FACE_OFFSETS.getOrDefault(face, new double[] {0.5, 0.5, 0.5});
+            ax = x + off[0];
+            ay = y + off[1];
+            az = z + off[2];
+        } else {
+            if (!face.equals("center")) {
+                return "look_lock_err: face 只对整数方块坐标有效"
+                        + "（小数坐标=精确点模式，请二选一：整数坐标+face，或小数坐标直接瞄点）";
+            }
+            ax = x;
+            ay = y;
+            az = z;
+        }
+        return Drivers.startLookLock(p, ax, ay, az, durationMs, face);
     }
 
     // ---------------------------------------------------------------- 输入：按键 / 移动 / 视角 / 鼠标
@@ -1259,6 +1522,7 @@ final class Actions {
         }
         p.setYRot(yaw);
         p.setXRot(pitch);
+        Drivers.cancelLookLock("被 turn 动作中断");
         return Json.obj(Json.kv("action", Json.str("turn")),
                 Json.kv("yaw", Json.num(yaw)),
                 Json.kv("pitch", Json.num(pitch)));
@@ -1307,6 +1571,7 @@ final class Actions {
         mc.mouseHandler.xpos = x;
         mc.mouseHandler.ypos = y;
         mc.mouseHandler.onMove(mc.getWindow().getWindow(), x, y);
+        Drivers.cancelLookLock("被 mouse_move 动作中断");
         return Json.obj(Json.kv("action", Json.str("mouse_move")),
                 Json.kv("x", Json.num(x)), Json.kv("y", Json.num(y)));
     }
@@ -1375,7 +1640,9 @@ final class Actions {
             var box = p.getBoundingBox().inflate(radius);
             for (var e : p.level().getEntities(p, box)) {
                 double d = Math.sqrt(e.distanceToSqr(p));
-                out.add(Json.obj(Json.kv("type", Json.str(String.valueOf(net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(e.getType())))),
+                // v0.2.1.38：输出实体 id——look_lock target=<id> 直锁模式的唯一 id 来源
+                out.add(Json.obj(Json.kv("id", Json.num(e.getId())),
+                        Json.kv("type", Json.str(String.valueOf(net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(e.getType())))),
                         Json.kv("dist", Json.num(Math.round(d * 10) / 10.0)),
                         Json.kv("pos", Json.arr(List.of(Json.num(e.getX()), Json.num(e.getY()), Json.num(e.getZ()))))));
                 if (out.size() >= limit) {
@@ -2931,7 +3198,17 @@ final class Actions {
 
         groups.put("自省/状态", List.of("actions(help/list_actions)", "state", "ping", "time"));
         groups.put("世界/地形查询", List.of("block_at", "blockstate", "scan_region", "find_block(search_block/nearest_block)"));
-        groups.put("通信", List.of("say(chat)", "command(cmd)"));
+        groups.put("方块实体/物品数据", List.of(
+                "be_nbt(nbt_read/block_entity_nbt)：读任意方块实体已同步 NBT（SNBT 截断4000）"
+                        + "——服务器无 data 命令时的唯一读取途径；可选 x/y/z 或先 look 对准，可选 key=顶层键",
+                "item_nbt(held_nbt/item_components)：读物品完整数据组件（耐久/附魔/自定义名，SNBT）"
+                        + "——查耐久用它，mc_state 无 durability 字段"));
+        groups.put("告示牌", List.of(
+                "sign_edit(sign)：写正反面 4 行文本（lines 最多4行，一次动作完成，服务端持久化）"
+                        + "——★写文本只能用这个，禁止逐键 press 打字",
+                "sign_read(sign_text)：读正反两面 4 行文本/颜色/辉光标志（已加载区块内任意距离可读）"));
+        groups.put("通信", List.of("say(chat)", "command(cmd)",
+                "connect(join)：高级联机——立即连接 address 或配置地址，并清零自动连接预算"));
         groups.put("感知", List.of("get_inventory(inv_query)", "players", "entities", "overlay(actionbar)",
                 "online_players(online/player_list/tab_list)"));
         List<String> uiGroup = new ArrayList<>(List.of("get_screen(screen)"));
@@ -2947,7 +3224,31 @@ final class Actions {
             contGroup.add("cont_button(menu_button)");
         }
         groups.put("容器操作", contGroup);
-        groups.put("视角", List.of("look（看向坐标/角度）", "turn（相对或绝对转向）"));
+        groups.put("视角", List.of("look（看向坐标/角度）", "turn（相对或绝对转向）",
+                "look_lock(lock_view/aim_lock)：限时锁定视角朝向指定方块（默认瞄中心），"
+                        + "可选 face=up/down/north/south/east/west 锁某面中心（别名 top/bottom；"
+                        + "★只对整数方块坐标有效，与小数坐标精确点二选一）；"
+                        + "v0.2.1.37 起可锁实体：target=实体id 或 target_type=类型id(64格内最近)，"
+                        + "aim=center/eyes，实体消失/超距8格自动结束(target_lost)；"
+                        + "任何视角操作立即中断；不带参数=查状态"));
+        List<String> digGroup = new ArrayList<>();
+        if (!gmSafe) {
+            digGroup.add("dig(break/mine)：破坏指定坐标方块（不走按键链路，不受鼠标抓取门禁影响）——"
+                    + "返回后轮询 dig_status 至终态；stop=true 取消");
+        }
+        digGroup.add("dig_status(dig_state)：查询挖掘任务（idle/running 带进度 0-9/终态）");
+        groups.put("挖掘", digGroup);
+        List<String> placeGroup = new ArrayList<>();
+        if (!gmSafe) {
+            placeGroup.add("place(place_block/put_block)：把手持方块放入指定空气格 x,y,z"
+                    + "（API 路径发包 useItemOn，不经按键注入，不受鼠标抓取/窗口前台门禁影响）——"
+                    + "自动选支撑面（优先下方地板→四周墙→上方天花板），side=up/down/north/south/east/west "
+                    + "可显式指定，hand=main/off；★玩家碰撞箱（宽0.6高1.8）与目标格重叠会直接报错"
+                    + "（先 move 走开/跳起或换目标格）；返回 place_sent，随后 place_status 或 block_at 复核");
+        }
+        placeGroup.add("place_status(place_state)：查询上次放置确认"
+                + "（pending/placed 附 landed/failed 附 detail 诊断/unverified）");
+        groups.put("放置", placeGroup);
         List<String> inputGroup = new ArrayList<>();
         if (!gmSafe) {
             inputGroup.add("press(key)");
