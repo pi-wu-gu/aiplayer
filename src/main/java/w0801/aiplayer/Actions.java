@@ -38,10 +38,10 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
-import net.minecraft.network.protocol.game.ServerboundSignUpdatePacket;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
-import net.minecraft.world.level.block.entity.SignText;
+import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ClickType;
@@ -559,9 +559,11 @@ final class Actions {
 
     /** 高级联机（0.2.1.26）：connect {address:"ip:port"} 或 {} 用配置地址——立即发起连接并清零自动连接预算。 */
     /**
-     * 告示牌写文本（v0.2.1.31）：一次动作直接写 4 行文本，替代逐键打字。
-     * 目标：准星命中的告示牌（先 look），或 x/y/z 显式指定。发送 ServerboundSignUpdatePacket
-     * 走原版服务端持久化路径（等价于编辑界面点完成），同时更新客户端方块实体即时可见。
+     * 告示牌写文本（v0.2.1.31）：一次动作写 4 行，替代逐键打字。
+     * ★服务端只接受「编辑器打开状态」下的更新包（SignBlockEntity.updateSignText 校验
+     * playerWhoMayEdit），故流程为：模拟右键开编辑器（服务端置编辑态）→ 下个 tick 由
+     * AiPlayerClient.tickPendingSignEdit 注入文本并 onClose()（removed() 发包，服务端接受）。
+     * 写入面 = 发起者所站的一面（服务端按玩家位置决定 front，无法远控）。
      */
     private static String signEdit(JsonObject par) {
         LocalPlayer p = requirePlayer();
@@ -588,12 +590,11 @@ final class Actions {
         if (sign.isWaxed()) {
             return "sign_err: 该告示牌已涂蜡，无法编辑";
         }
-        double distSq = p.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5);
-        if (distSq > 64.0) {
-            return String.format("sign_err: 距离过远（服务端要求 8 格内），当前约 %.1f 格",
+        double distSq = p.getEyePosition().distanceToSqr(Vec3.atCenterOf(pos));
+        if (distSq > 16.0) {
+            return String.format("sign_err: 距离过远（交互范围需 ≤4 格，当前 %.1f 格）——先走近再试",
                     Math.sqrt(distSq));
         }
-        boolean front = Json.optBool(par, "front", true);
         java.util.List<String> lines = new java.util.ArrayList<>();
         if (par.has("lines") && par.get("lines").isJsonArray()) {
             for (JsonElement el : par.getAsJsonArray("lines")) {
@@ -610,33 +611,20 @@ final class Actions {
         if (lines.isEmpty() || lines.stream().allMatch(String::isBlank)) {
             return "sign_err: 缺少 lines（最多 4 行的文本数组）";
         }
-        while (lines.size() < 4) {
-            lines.add("");
-        }
-        if (p.connection == null) {
-            return "sign_err: 无网络连接";
-        }
-        // 客户端方块实体立即更新（视觉即时）；随后发更新包走服务端持久化
-        try {
-            SignText now = sign.getText(front);
-            for (int i = 0; i < 4; i++) {
-                now = now.setMessage(i, Component.literal(lines.get(i)));
-            }
-            sign.setText(now, front);
-            sign.setChanged();
-            p.level().sendBlockUpdated(pos, sign.getBlockState(), sign.getBlockState(), 3);
-        } catch (Throwable ignored) {
-            // 客户端预览失败不影响服务端更新
-        }
-        p.connection.send(new ServerboundSignUpdatePacket(pos, front,
-                lines.get(0), lines.get(1), lines.get(2), lines.get(3)));
-        AiPlayer.LOG.info("[AI Player] sign_edit: {} front={} lines={}", pos.toShortString(), front, lines);
+        boolean front = sign.isFacingFrontText(p);
+        AiPlayerClient.queueSignEdit(pos, front, lines);
+        // 模拟右键：服务端置编辑态并回包开屏；客户端预测也会立即开屏（同块同文，无碍）
+        Minecraft.getInstance().gameMode.useItemOn(p, InteractionHand.MAIN_HAND,
+                new BlockHitResult(Vec3.atCenterOf(pos), net.minecraft.core.Direction.UP, pos, false));
+        AiPlayer.LOG.info("[AI Player] sign_edit 发起: {} front={} lines={}",
+                pos.toShortString(), front, lines);
         return Json.obj(
                 Json.kv("action", Json.str("sign_edit")),
                 Json.kv("pos", Json.arr(List.of(Json.num(pos.getX()), Json.num(pos.getY()), Json.num(pos.getZ())))),
                 Json.kv("front", Json.bool(front)),
                 Json.kv("lines", Json.arr(lines.stream().map(Json::str).collect(java.util.stream.Collectors.toList()))),
-                Json.kv("note", Json.str("已发送更新包（服务端异步确认，可 look 后截图核验）")));
+                Json.kv("queued", Json.bool(true)),
+                Json.kv("note", Json.str("已发起：编辑器打开后自动注入文本并提交（约1秒）；可截图核验")));
     }
 
     private static String connectAction(JsonObject par) {

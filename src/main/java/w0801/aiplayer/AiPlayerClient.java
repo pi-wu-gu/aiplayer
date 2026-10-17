@@ -1,6 +1,7 @@
 package net.aiplayer;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.ModContainer;
@@ -94,6 +95,7 @@ public class AiPlayerClient {
             if (mc == null) {
                 return;
             }
+            tickPendingSignEdit();           // sign_edit 延迟提交（有 pending 才做事）
             if (mc.player != null) {
                 // 成功进过世界 → 重置自动连接预算（之后每次断线都重新有 maxAttempts 次机会）
                 if (autoConnectAttempts != 0) {
@@ -227,6 +229,58 @@ public class AiPlayerClient {
     }
 
     private static volatile long lastAuthReplyAt = 0L;
+
+    // ---------------- sign_edit 延迟提交（v0.2.1.31） ----------------
+    // 服务端只接受「编辑器打开状态」（playerWhoMayEdit==本玩家）下的更新包——
+    // 裸发包会被 SignBlockEntity.updateSignText 拒绝（"tried to change non-editable sign"）。
+    // 流程：sign_edit 动作模拟右键开编辑器 → 下个 tick 此钩子反射改 messages → onClose()
+    // 触发 removed() 用我们的文本发包（此时编辑态有效，服务端接受）。
+    private record PendingSignEdit(BlockPos pos, boolean front, java.util.List<String> lines, long deadlineMs) {
+    }
+
+    private static volatile PendingSignEdit pendingSignEdit = null;
+
+    /** sign_edit 动作入口：登记待写文本（随后模拟右键开编辑器，tick 钩子自动提交）。 */
+    public static void queueSignEdit(BlockPos pos, boolean front, java.util.List<String> lines) {
+        pendingSignEdit = new PendingSignEdit(pos.immutable(), front, lines,
+                System.currentTimeMillis() + 5000);
+    }
+
+    /** 每 tick 检查：编辑器屏幕已打开 → 注入文本并关闭（触发发包）。超时 5s 放弃。 */
+    static void tickPendingSignEdit() {
+        PendingSignEdit pe = pendingSignEdit;
+        if (pe == null) {
+            return;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.screen instanceof net.minecraft.client.gui.screens.inventory.AbstractSignEditScreen scr) {
+            pendingSignEdit = null;
+            try {
+                java.lang.reflect.Field fMsg =
+                        net.minecraft.client.gui.screens.inventory.AbstractSignEditScreen.class
+                                .getDeclaredField("messages");
+                fMsg.setAccessible(true);
+                String[] msgs = (String[]) fMsg.get(scr);
+                for (int i = 0; i < 4; i++) {
+                    msgs[i] = i < pe.lines().size() ? pe.lines().get(i) : "";
+                }
+                scr.onClose();   // removed() → ServerboundSignUpdatePacket（编辑态有效，服务端接受）
+                AiPlayer.LOG.info("[AI Player] sign_edit 已提交: {} front={} lines={}",
+                        pe.pos().toShortString(), pe.front(), pe.lines());
+            } catch (Throwable t) {
+                AiPlayer.LOG.warn("[AI Player] sign_edit 注入失败（关闭编辑器兜底）: {}", t.toString());
+                try {
+                    scr.onClose();
+                } catch (Throwable ignored) {
+                    // 兜底关闭失败也无需处理
+                }
+            }
+        } else if (mc.screen == null && System.currentTimeMillis() > pe.deadlineMs()) {
+            pendingSignEdit = null;
+            AiPlayer.LOG.warn("[AI Player] sign_edit 超时：编辑器未打开（目标 {}）",
+                    pe.pos().toShortString());
+        }
+    }
 
     /**
      * 认证插件自动应答（v0.2.1.28）：聊天出现登录提示时自动发送 /login。
