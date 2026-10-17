@@ -77,5 +77,9 @@
   "aiplayer.configuration.sidecar.watchdogInterval": "【sidecar】看门狗探活间隔（秒，0=关）",
   "aiplayer.configuration.sidecar.watchdogInterval.tooltip": "探活失败自动重启 agent（带退避，上限 60s）。范围 0-3600。↻需重启客户端",
   "aiplayer.configuration.lanAutoJoin": "【高级联机】局域网世界自动加入",
-  "aiplayer.configuration.lanAutoJoin.tooltip": "主界面时监听 MC 局域网世界广播（多播 224.0.2.60:4445），发现「对局域网开放」的世界后自动加入，优先于 serverAddress 自动登录。被动收包不发送。默认关。⚡即时生效"
+  "aiplayer.configuration.lanAutoJoin.tooltip": "主界面时监听 MC 局域网世界广播（多播 224.0.2.60:4445），发现「对局域网开放」的世界后自动加入，优先于 serverAddress 自动登录。被动收包不发送。默认关。⚡即时生效",
+  "aiplayer.configuration.authAutoReply": "【认证】自动应答登录提示",
+  "aiplayer.configuration.authAutoReply.tooltip": "聊天出现登录提示（如「请输入 /login <密码>」）时自动发送 /login，让无人值守的 bot 自己完成登录（配合 AuthMe 类认证服）。默认关。⚡即时生效",
+  "aiplayer.configuration.authPassword": "【认证】登录密码",
+  "aiplayer.configuration.authPassword.tooltip": "authAutoReply 开启时使用的登录密码。⚠明文存于游戏目录 toml——注意不要截图/提交该文件。默认空=不应答。⚡即时生效"
 }

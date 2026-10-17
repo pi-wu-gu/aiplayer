@@ -226,6 +226,43 @@ public class AiPlayerClient {
                 Json.kv("attempts_reset", Json.bool(true)));
     }
 
+    private static volatile long lastAuthReplyAt = 0L;
+
+    /**
+     * 认证插件自动应答（v0.2.1.28）：聊天出现登录提示时自动发送 /login。
+     * 触发条件：authAutoReply 开 + authPassword 非空 + 消息含登录提示特征。
+     * 10 秒冷却防刷屏（认证插件会每 5 秒重复提示）。
+     */
+    private static void maybeAuthReply(String text) {
+        try {
+            if (!AiPlayerConfig.authAutoReply()) {
+                return;
+            }
+            String pwd = AiPlayerConfig.authPassword();
+            if (pwd == null || pwd.isBlank() || text == null) {
+                return;
+            }
+            boolean hit = (text.contains("/login") && text.contains("请输入"))
+                    || text.contains("请登录");
+            if (!hit) {
+                return;
+            }
+            long now = System.currentTimeMillis();
+            if (now - lastAuthReplyAt < 10_000) {
+                return;
+            }
+            lastAuthReplyAt = now;
+            Minecraft mc = Minecraft.getInstance();
+            if (mc == null || mc.getConnection() == null) {
+                return;
+            }
+            mc.getConnection().sendCommand("login " + pwd);
+            AiPlayer.LOG.info("[AI Player] 已自动应答登录提示（/login）");
+        } catch (Throwable t) {
+            AiPlayer.LOG.warn("[AI Player] 自动登录应答失败（不影响游戏）: {}", t.toString());
+        }
+    }
+
     /** 聊天栏采集：进缓冲并落盘，供 {@code GET /chat?since=} 与大脑做"只注入新消息"。 */
     @SubscribeEvent
     static void onChatReceived(ClientChatReceivedEvent event) {
@@ -233,7 +270,9 @@ public class AiPlayerClient {
             if (!AiPlayerConfig.enabled()) {
                 return;
             }
-            ChatBuffer.add(event.getMessage().getString());
+            String text = event.getMessage().getString();
+            ChatBuffer.add(text);
+            maybeAuthReply(text);
         } catch (Exception e) {
             // 聊天采集失败绝不能影响游戏
         }

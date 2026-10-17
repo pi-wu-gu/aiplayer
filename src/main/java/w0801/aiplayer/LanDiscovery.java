@@ -74,7 +74,26 @@ public final class LanDiscovery {
         while (true) {
             try (MulticastSocket sock = new MulticastSocket(PORT)) {
                 InetAddress group = InetAddress.getByName(GROUP);
-                sock.joinGroup(group);
+                // ★v0.2.1.28：遍历所有可用接口逐一加入多播组——默认接口在 Windows
+                //   多网卡/IPv6 优先环境下会报 "Network interface not configured for IPv4"
+                int joined = 0;
+                java.util.Enumeration<java.net.NetworkInterface> nifs =
+                        java.net.NetworkInterface.getNetworkInterfaces();
+                while (nifs != null && nifs.hasMoreElements()) {
+                    java.net.NetworkInterface nif = nifs.nextElement();
+                    if (!nif.isUp() || nif.isLoopback() || !nif.supportsMulticast()) {
+                        continue;
+                    }
+                    try {
+                        sock.joinGroup(new java.net.InetSocketAddress(group, PORT), nif);
+                        joined++;
+                    } catch (Exception ignored) {
+                        // 单接口失败不影响其他接口
+                    }
+                }
+                if (joined == 0) {
+                    throw new IllegalStateException("没有任何接口成功加入多播组（10s 后重试）");
+                }
                 sock.setSoTimeout(30_000);
                 byte[] buf = new byte[1024];
                 while (true) {

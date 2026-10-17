@@ -69,6 +69,17 @@ public final class AiPlayerConfig {
                      "公告仅被动接收不发送；断开或世界关闭后回到主界面继续等待。默认 false。⚡即时生效")
             .define("lanAutoJoin", false);
 
+    public static final ModConfigSpec.BooleanValue AUTH_AUTO_REPLY = B
+            .comment("【认证】聊天出现登录提示（如「请输入 /login <密码>」）时自动发送 /login 应答。",
+                     "配合认证类服务器（AuthMe 等），让无人值守的 bot 自己完成登录。",
+                     "密码存于本配置文件（游戏目录 toml，不入仓库）。默认 false。⚡即时生效")
+            .define("authAutoReply", false);
+
+    public static final ModConfigSpec.ConfigValue<String> AUTH_PASSWORD = B
+            .comment("【认证】登录密码（authAutoReply 开启时使用）。⚠明文存于游戏目录 toml，",
+                     "注意不要截图/提交该文件。默认空=不应答。⚡即时生效")
+            .define("authPassword", "");
+
     // 注：apiKey / model 的**配置项键名**沿用 v0.1（apiKey、model），
     //     新的通用 API 配置段（v0.3）里复用这两个键，避免已生成的 toml 失效。
 
@@ -425,6 +436,22 @@ public final class AiPlayerConfig {
             return Math.max(1, AUTO_CONNECT_MAX_ATTEMPTS.get());
         } catch (Throwable t) {
             return 2;
+        }
+    }
+
+    public static boolean authAutoReply() {
+        try {
+            return AUTH_AUTO_REPLY.get();
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    public static String authPassword() {
+        try {
+            return AUTH_PASSWORD.get();
+        } catch (Throwable t) {
+            return "";
         }
     }
 

@@ -77,5 +77,9 @@
   "aiplayer.configuration.sidecar.watchdogInterval": "[Sidecar] Watchdog Interval (sec, 0=off)",
   "aiplayer.configuration.sidecar.watchdogInterval.tooltip": "Restarts the agent on failed health checks (exponential backoff, capped at 60s). Range 0-3600. Restart required",
   "aiplayer.configuration.lanAutoJoin": "[Net] Auto-join LAN worlds",
-  "aiplayer.configuration.lanAutoJoin.tooltip": "While on the title screen, listen for Minecraft LAN announcements (multicast 224.0.2.60:4445) and auto-join a discovered open-to-LAN world (takes priority over serverAddress). Passive listener. Default off. Applies instantly"
+  "aiplayer.configuration.lanAutoJoin.tooltip": "While on the title screen, listen for Minecraft LAN announcements (multicast 224.0.2.60:4445) and auto-join a discovered open-to-LAN world (takes priority over serverAddress). Passive listener. Default off. Applies instantly",
+  "aiplayer.configuration.authAutoReply": "[Auth] Auto-reply to login prompt",
+  "aiplayer.configuration.authAutoReply.tooltip": "When chat shows a login prompt (e.g. /login <password>), automatically send /login so an unattended bot completes auth (for AuthMe-like servers). Default off. Applies instantly",
+  "aiplayer.configuration.authPassword": "[Auth] Login password",
+  "aiplayer.configuration.authPassword.tooltip": "Password used when authAutoReply is on. WARNING: stored in plaintext in the game-dir toml — never screenshot or commit it. Default empty = no reply. Applies instantly"
 }
