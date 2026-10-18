@@ -213,13 +213,13 @@
 
 **动作名 68 个（含别名）/ 实现 42 个。**（该版本时点数）
 
-> **当前规模（v0.2.1.45）**：源码注册调用共 **57 个**（含全部条件闸全开）。
+> **当前规模（v0.2.1.45，2026-10-19 实机核验）**：源码注册调用共 **57 个**（含全部条件闸全开）。
 > 按**部署实配**（`sidecar.enabled=true` / `selfToolEnabled=false` / `commandEnabled=true` /
-> `fileMode=full` / `networkEnabled=true`）实测口径：**full = 56 实现 / 103 动作名（含别名）**；
-> `gameActionMode` 逐档摘除后 **safe = 48 / 85**、**observe = 45 / 82**。
-> `selfToolEnabled=true` 时全开 = 57 实现 / 105 名；出厂默认（`sidecar.enabled=false`）= 53 实现 / 98 名。
-> （口径说明：条件闸在装配期生效，`{"type":"actions"}` 的 count 随配置变化；以上数字按
-> `Actions.java` 注册调用逐档展开核算，与 `/actions` 自省一致。）
+> `fileMode=full` / `networkEnabled=true`）**运行时实测**：**full = 56 实现 / 102 注册表键（`REGISTRY.size()`）**；
+> `gameActionMode` 逐档摘除后 **safe = 48 / 84**、**observe = 45 / 81**。
+> `selfToolEnabled=true` 时全开 = 57 实现 / 104 键；出厂默认（`sidecar.enabled=false`）= 53 实现 / 97 键。
+> （口径说明：条件闸在装配期生效，`{"type":"actions"}` 的 `count` = `REGISTRY.size()` 随配置变化；
+> 实现数 = groups 主名合计，已与源码 register 调用逐档核对一致。）
 
 ### 截图（0.2.1.4）
 
@@ -700,7 +700,7 @@ aiplayer/
 │   ├── AiPlayerConfig.java    # ModConfigSpec 用户配置
 │   ├── AiPlayerPaths.java     # <gamedir>/aiplayer/ 解析、骨架、原子写、实例锁
 │   ├── ControlServer.java     # 内嵌 HTTP 服务（/state /chat /actions /command /health /stats）
-│   ├── Actions.java           # 动作层（57 个注册调用，含全部条件闸；部署实配 full=56/103，见「当前规模」节）
+│   ├── Actions.java           # 动作层（57 个注册调用，含全部条件闸；部署实配 full=56/102，见「当前规模」节）
 │   │                          #   ★文件 3375 行，占全仓 ~46%，后续按能力域拆分
 │   ├── ChatBuffer.java        # 聊天缓冲（单调 id + 落盘）
 │   └── Json.java              # JSON 输出辅助
