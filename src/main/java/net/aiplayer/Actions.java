@@ -2247,6 +2247,20 @@ final class Actions {
      *   <li>{@code find}：按物品 id 子串查槽，直接给出可点的 cx/cy</li>
      *   <li>{@code post_click}：上一次点击 300ms 后的同步后状态（异步捕获，见 {@link #schedulePostClick()}）</li>
      * </ul>
+     *
+     * <p><b>大输出限量参数</b>（默认全关 = 旧行为字节级不变；背包 36 槽全量 dump ≈3KB，
+     * 大容量模组容器动辄数百槽，曾把 agent token 烧穿熔断）：
+     * <ul>
+     *   <li>{@code compact=true}：只回**非空槽**且每槽只留 {@code index/sec/cx/cy/id/count}
+     *       （丢 {@code cls/pick/place/active}）；空槽占比高时输出可缩一个数量级</li>
+     *   <li>{@code only=container|inventory}：只序列化指定区段的槽
+     *       （找容器里有什么/整理背包各自只看一段，不用互翻）</li>
+     *   <li>{@code max_slots=N}：限制序列化槽数上限（compact 默认仍受 200 硬顶保护，
+     *       N 只能在此基础上再收紧）</li>
+     *   <li>限量生效时追加 {@code shown}（实际返回槽数）与 {@code truncated}（是否有槽被裁掉）——
+     *       裁掉了就换 find 精确查或分段 only 读，别当"容器只有这些"</li>
+     *   <li>与 {@code find} 互斥语义：find 模式本就只回匹配槽（最省），新参数不参与</li>
+     * </ul>
      */
     private static String containerInfo(JsonObject par) {
         Minecraft mc = Minecraft.getInstance();
@@ -2279,24 +2293,36 @@ final class Actions {
 
         String find = Json.optString(par, "find", null);
         String findLower = (find == null || find.isBlank()) ? null : find.toLowerCase(Locale.ROOT);
+        // ---- 大输出限量参数（默认全关 = 旧行为字节级不变）----
+        boolean compact = Json.optBool(par, "compact", false);
+        String only = Json.optString(par, "only", null);
+        if (only != null && !only.isBlank()
+                && !only.equals("container") && !only.equals("inventory")) {
+            return "get_container_err: only 仅支持 container|inventory（收到: " + only + "）";
+        }
+        int maxSlots = Json.optInt(par, "max_slots", 0);
+        if (maxSlots < 0) {
+            maxSlots = 0;
+        }
+        boolean limitActive = compact
+                || (only != null && !only.isBlank())
+                || maxSlots > 0;
+        // 200 硬顶保持不变；max_slots 只能在此基础上再收紧
+        int effCap = maxSlots > 0 ? Math.min(maxSlots, 200) : 200;
+
         List<String> slots = new ArrayList<>();
         List<String> matches = new ArrayList<>();
         ItemStack carried = menu.getCarried();
+        int inScope = 0; // 通过过滤、本应输出的槽数（truncated 判定用）
 
         for (int i = 0; i < menu.slots.size(); i++) {
             net.minecraft.world.inventory.Slot s = menu.slots.get(i);
             String sec = s.container == pinv ? "inventory" : "container";
             ItemStack st = s.getItem();
-            String id = st.isEmpty() ? "air" : itemId(st);
+            boolean empty = st.isEmpty();
+            String id = empty ? "air" : itemId(st);
             int cx = left + s.x + 8;
             int cy = top + s.y + 8;
-            // mayPlace 探测：有物品用自身，空槽用光标（EMPTY 也能识别 ResultSlot 这类永不放行的槽）
-            boolean place;
-            try {
-                place = s.mayPlace(!st.isEmpty() ? st : carried);
-            } catch (Throwable t) {
-                place = true; // 模组槽异常不拖垮整个视图
-            }
             if (findLower != null) {
                 if (id.toLowerCase(Locale.ROOT).contains(findLower)) {
                     matches.add(Json.obj(
@@ -2306,23 +2332,47 @@ final class Actions {
                             Json.kv("id", Json.str(id)),
                             Json.kv("count", Json.num(st.getCount()))));
                 }
-            } else if (slots.size() < 200) {
-                boolean pick;
-                try {
-                    pick = s.mayPickup(p);
-                } catch (Throwable t) {
-                    pick = true;
+            } else {
+                boolean secOk = only == null || only.isBlank() || only.equals(sec);
+                if (!secOk || (compact && empty)) {
+                    // 被 only/compact 过滤：不计入 inScope
+                } else if (slots.size() >= effCap) {
+                    inScope++; // 想输出但被上限裁掉 → truncated
+                } else {
+                    inScope++;
+                    if (compact) {
+                        slots.add(Json.obj(
+                                Json.kv("index", Json.num(i)),
+                                Json.kv("sec", Json.str(sec)),
+                                Json.kv("cx", Json.num(cx)), Json.kv("cy", Json.num(cy)),
+                                Json.kv("id", Json.str(id)),
+                                Json.kv("count", Json.num(st.getCount()))));
+                    } else {
+                        boolean pick;
+                        try {
+                            pick = s.mayPickup(p);
+                        } catch (Throwable t) {
+                            pick = true;
+                        }
+                        // mayPlace 探测：有物品用自身，空槽用光标（EMPTY 也能识别 ResultSlot 这类永不放行的槽）
+                        boolean place;
+                        try {
+                            place = s.mayPlace(!st.isEmpty() ? st : carried);
+                        } catch (Throwable t) {
+                            place = true; // 模组槽异常不拖垮整个视图
+                        }
+                        slots.add(Json.obj(
+                                Json.kv("index", Json.num(i)),
+                                Json.kv("sec", Json.str(sec)),
+                                Json.kv("cx", Json.num(cx)), Json.kv("cy", Json.num(cy)),
+                                Json.kv("id", Json.str(id)),
+                                Json.kv("count", Json.num(st.getCount())),
+                                Json.kv("cls", Json.str(s.getClass().getSimpleName())),
+                                Json.kv("pick", Json.bool(pick)),
+                                Json.kv("place", Json.bool(place)),
+                                Json.kv("active", Json.bool(s.isActive()))));
+                    }
                 }
-                slots.add(Json.obj(
-                        Json.kv("index", Json.num(i)),
-                        Json.kv("sec", Json.str(sec)),
-                        Json.kv("cx", Json.num(cx)), Json.kv("cy", Json.num(cy)),
-                        Json.kv("id", Json.str(id)),
-                        Json.kv("count", Json.num(st.getCount())),
-                        Json.kv("cls", Json.str(s.getClass().getSimpleName())),
-                        Json.kv("pick", Json.bool(pick)),
-                        Json.kv("place", Json.bool(place)),
-                        Json.kv("active", Json.bool(s.isActive()))));
             }
             if (prevSec == null) {
                 prevSec = sec;
@@ -2339,6 +2389,17 @@ final class Actions {
                     Json.kv("from", Json.num(runStart)), Json.kv("to", Json.num(menu.slots.size() - 1))));
         }
         parts.add(Json.kv("ranges", Json.arr(runs)));
+        if (findLower == null && limitActive) {
+            parts.add(Json.kv("compact", Json.bool(compact)));
+            if (only != null && !only.isBlank()) {
+                parts.add(Json.kv("only", Json.str(only)));
+            }
+            if (maxSlots > 0) {
+                parts.add(Json.kv("max_slots", Json.num(maxSlots)));
+            }
+            parts.add(Json.kv("shown", Json.num(slots.size())));
+            parts.add(Json.kv("truncated", Json.bool(slots.size() < inScope)));
+        }
         if (findLower != null) {
             parts.add(Json.kv("find", Json.str(find)));
             parts.add(Json.kv("matched", Json.num(matches.size())));

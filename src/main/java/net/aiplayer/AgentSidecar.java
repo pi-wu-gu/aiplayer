@@ -9,6 +9,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Comparator;
+import java.util.List;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -146,38 +148,57 @@ public final class AgentSidecar {
         }
     }
 
-    /** 需要跨部署保留的用户数据（相对 target 的路径）。 */
-    private static final String[] USER_DATA = {KEYS_FILENAME, "config/config.yaml", "logs"};
+    /** 需要跨部署保留的用户数据（相对 target 的路径）。
+     *  ★2026-10-18 补 keywords/todo/wake_blacklist 三个 json：三者都是 agent 运行时
+     *    持续累积的活数据（关键词记忆/待办清单/唤醒黑名单），漏继承 = 升级即丢
+     *    （实证：0.2.1.42→0.2.1.43 丢了 keywords.json 全部条目，审计日志却因 logs/
+     *    在清单里而幸存，数据/日志不对称）。后续新增运行时状态文件必须加进来。 */
+    private static final String[] USER_DATA = {
+            KEYS_FILENAME, "config/config.yaml", "logs",
+            "config/keywords.json", "config/todo.json", "config/wake_blacklist.json"};
 
-    /** 跨版本继承：把 base 下版本号最新的兄弟目录里的 keys/config/logs 拷过来（best-effort）。
-     *  ★按目录 mtime 取最新——版本字符串字典序不可靠（"0.2.1.9" > "0.2.1.10"）。 */
+    /** 跨版本继承：把 base 下兄弟目录里的 keys/config/logs 等用户数据拷过来（best-effort）。
+     *  ★每个文件**独立**按目录 mtime 从新到旧找第一个有的版本——不是只认"最新目录"：
+     *    0.2.1.42→0.2.1.43 实测时最新目录缺 keywords/todo/wake_blacklist（那时还没进
+     *    USER_DATA），若只认最新目录，这些文件补进清单也继承不到。
+     *  ★按 mtime 取序——版本字符串字典序不可靠（"0.2.1.9" > "0.2.1.10"）。 */
     private static void inheritFromPrevious(Path base, Path target) {
         try (Stream<Path> dirs = Files.list(base)) {
-            Path prev = dirs
+            List<Path> prevs = dirs
                     .filter(Files::isDirectory)
                     .filter(d -> !d.equals(target))
                     .filter(d -> Files.isRegularFile(d.resolve("run.py")))
-                    .max(Comparator.comparingLong(p -> {
+                    .sorted(Comparator.comparingLong((Path p) -> {
                         try {
                             return Files.getLastModifiedTime(p).toMillis();
                         } catch (IOException e) {
                             return 0L;
                         }
-                    }))
-                    .orElse(null);
-            if (prev == null) {
+                    }).reversed())
+                    .collect(Collectors.toList());
+            if (prevs.isEmpty()) {
                 return;
             }
-            for (String rel : new String[]{KEYS_FILENAME, "config/config.yaml", "logs"}) {
-                Path src = prev.resolve(rel);
-                if (!Files.exists(src)) {
-                    continue;
+            Path used = null;
+            for (String rel : USER_DATA) {
+                for (Path prev : prevs) {
+                    Path src = prev.resolve(rel);
+                    if (!Files.exists(src)) {
+                        continue;
+                    }
+                    Path dst = target.resolve(rel);
+                    Files.createDirectories(dst.getParent());
+                    copyTree(src, dst);
+                    if (used == null) {
+                        used = prev;
+                    }
+                    break; // 每个文件独立：取"最新有该文件的版本"，不再看更旧的
                 }
-                Path dst = target.resolve(rel);
-                Files.createDirectories(dst.getParent());
-                copyTree(src, dst);
             }
-            AiPlayer.LOG.info("[sidecar] 已从上一版本目录继承用户数据: {}", prev.getFileName());
+            if (used != null) {
+                AiPlayer.LOG.info("[sidecar] 已从上一版本目录继承用户数据（最新来源: {}）",
+                        used.getFileName());
+            }
         } catch (Throwable t) {
             AiPlayer.LOG.warn("[sidecar] 继承上一版本数据失败（继续全新部署）: {}", t.toString());
         }

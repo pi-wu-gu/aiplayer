@@ -141,7 +141,7 @@
 
 | 动作 | 参数 | 实测 |
 |---|---|---|
-| `get_container`(别名 `container` `cont_info`) | `find`(物品 id 子串)、`slots` | ✅ 背包 `InventoryMenu` 46 槽：`ranges` 分出 **0-4 合成区 / 5-45 背包区**；`cls` 认出 5-8 是 `ArmorSlot`；每槽带 `pick`(mayPickup) / `place`(mayPlace 探测) |
+| `get_container`(别名 `container` `cont_info`) | `find`(物品 id 子串)、`compact=true`(只回非空槽 index/id/count)、`only=container\|inventory`(只看一段)、`max_slots=N`(槽数上限，200 硬顶内再收紧) | ✅ 背包 `InventoryMenu` 46 槽：`ranges` 分出 **0-4 合成区 / 5-45 背包区**；`cls` 认出 5-8 是 `ArmorSlot`；每槽带 `pick`(mayPickup) / `place`(mayPlace 探测)；★0.2.1.44 起四个限量参数治大输出（Sophisticated Backpacks 156 槽全量 ≈2.3 万字符，曾把 agent token 烧穿熔断）——限量生效时追加 `shown`/`truncated`，`truncated=true` 必须换 find/only 分段读 |
 | `click_slot`(别名 `slot_click` `cont_click`) | `slot`(索引，-1=界面外) `button`(0左1右2中) `shift` `hotbar` `drop` `mode`(auto/menu/mouse) | ✅ 左键拿起铁锭×27→再点放回；右键分半（云杉板 62→31/31）；QUICK_MOVE 与 vanilla 合并语义一致；`slot=-1` 丢光标；`drop=true` 丢槽位物品 |
 | `cont_button`(别名 `menu_button`) | `id` | 协议走通（`handleInventoryButtonClick`），按钮菜单实测待补 |
 
