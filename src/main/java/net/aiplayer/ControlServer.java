@@ -49,6 +49,18 @@ final class ControlServer {
     private static final int MAX_BODY = 256 * 1024;
     private static final int ACTION_TIMEOUT_MS = 20000;
 
+    /**
+     * 动作失败结果的前缀模式：{@code <动作名>_err: ...}（如 file_err / sign_err / look_lock_err）。
+     *
+     * <p>★为什么需要（2026-10-18 修）：此前 ok 判定写的是
+     * {@code result.endsWith("_err: 缺少 text")}——只匹配"缺少 text"这一种后缀，
+     * 而 Actions 里实际有 92 处 {@code _err:} 返回、20 种前缀（file_err/sign_err/move_err/
+     * mouse_err/dig_err/place_err...），其余全被误判为 {@code ok=true}。
+     * 后果：/command 的 ok 与 /stats.command_errors 失真，框架侧也会把失败当成功。
+     */
+    private static final java.util.regex.Pattern ERR_RESULT = java.util.regex.Pattern.compile(
+            "^[a-z][a-z0-9_]*_err:.*", java.util.regex.Pattern.DOTALL);
+
     private static ServerSocket socket;
     private static Thread acceptThread;
     private static final AtomicBoolean RUNNING = new AtomicBoolean(false);
@@ -367,7 +379,8 @@ final class ControlServer {
         }
         String result = holder[0] == null ? "(null)" : holder[0];
         Actions.setLastAction(result);
-        boolean ok = !(result.startsWith("unknown:") || result.startsWith("error:") || result.endsWith("_err: 缺少 text"));
+        boolean ok = !(result.startsWith("unknown:") || result.startsWith("error:")
+                || ERR_RESULT.matcher(result).matches());
         return new DispatchResult(result, ok);
     }
 

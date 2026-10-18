@@ -92,25 +92,44 @@ public final class AgentSidecar {
 
     private static void deployTo(Path target, String version) throws IOException {
         Path zipFile = extractBundleToTemp();
+        Path stash = null;
         try {
             boolean fresh = !Files.isDirectory(target);
-            if (fresh) {
-                // 跨版本升级：新版本目录从最近的旧版本目录继承用户数据（keys/config/logs）
-                inheritFromPrevious(target.getParent(), target);
-            } else {
-                preserveAndClear(target);
+            if (!fresh) {
+                // 同版本重部署：先把用户数据挪到临时区，清空目录后再解压
+                stash = stashUserData(target);
+                deleteRecursively(target);
+                Files.createDirectories(target);
             }
             unzip(zipFile, target);
+            // ★★恢复用户数据必须在 unzip **之后**（2026-10-18 实测 bug）：
+            //   bundle 内含 agent/config/config.yaml 的默认值。若先恢复再解压，
+            //   用户的 roots.shared / bot_names 会被默认值覆盖 →
+            //   文件工具指向不存在的 <GAME_DIR> 占位目录、@提及完全失灵。
+            //   （keys.yaml 与 logs 因不在 bundle 内，才侥幸没中招。）
+            if (fresh) {
+                // 跨版本升级：从最近的旧版本目录继承 keys/config/logs
+                inheritFromPrevious(target.getParent(), target);
+            } else if (stash != null) {
+                restoreUserData(stash, target);
+            }
             ensureKeysTemplate(target);
             Files.createDirectories(target);   // 目录必然已存在；防呆
+            warnIfPlaceholderConfig(target);
             Files.writeString(target.resolve(MARKER_FILENAME), version, StandardCharsets.UTF_8);
         } finally {
+            if (stash != null) {
+                cleanupStash(stash);
+            }
             try {
                 Files.deleteIfExists(zipFile);
             } catch (IOException ignored) {
             }
         }
     }
+
+    /** 需要跨部署保留的用户数据（相对 target 的路径）。 */
+    private static final String[] USER_DATA = {KEYS_FILENAME, "config/config.yaml", "logs"};
 
     /** 跨版本继承：把 base 下版本号最新的兄弟目录里的 keys/config/logs 拷过来（best-effort）。
      *  ★按目录 mtime 取最新——版本字符串字典序不可靠（"0.2.1.9" > "0.2.1.10"）。 */
@@ -177,35 +196,71 @@ public final class AgentSidecar {
     }
 
     /** 升级时保留用户数据（keys / config / logs）到临时目录，解压新包后移回。 */
-    private static void preserveAndClear(Path target) throws IOException {
-        String[] keep = {KEYS_FILENAME, "config/config.yaml", "logs"};
+    /** 把用户数据（keys/config/logs）挪到临时区并返回该临时目录。
+     *
+     * <p>★只 stash 不恢复——恢复必须由调用方在 {@code unzip} 之后做（见 deployTo 注释）。
+     * 旧实现 {@code preserveAndClear} 把"挪走+清空+放回"三步绑在一起，放回发生在解压之前，
+     * 于是 bundle 里的默认 config.yaml 又把用户配置覆盖回去了。
+     */
+    private static Path stashUserData(Path target) throws IOException {
         Path backup = Files.createTempDirectory("aiplayer-agent-keep");
+        for (String rel : USER_DATA) {
+            Path src = target.resolve(rel);
+            if (!Files.exists(src)) {
+                continue;
+            }
+            Path dst = backup.resolve(rel);
+            Files.createDirectories(dst.getParent());
+            Files.move(src, dst, StandardCopyOption.REPLACE_EXISTING);
+        }
+        return backup;
+    }
+
+    /** 把 stashUserData 备份的用户数据放回 target；目标已存在则先删（解压出来的默认文件）。 */
+    private static void restoreUserData(Path backup, Path target) throws IOException {
+        for (String rel : USER_DATA) {
+            Path src = backup.resolve(rel);
+            if (!Files.exists(src)) {
+                continue;
+            }
+            Path dst = target.resolve(rel);
+            Files.createDirectories(dst.getParent());
+            if (Files.exists(dst)) {
+                deleteRecursively(dst);
+            }
+            moveTree(src, dst);
+        }
+    }
+
+    private static void cleanupStash(Path backup) {
+        try (Stream<Path> walk = Files.walk(backup)) {
+            walk.sorted(Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
+        } catch (IOException ignored) {
+        }
+    }
+
+    /** 防呆：部署后若 config.yaml 仍带脱敏占位符，说明继承/恢复没生效，必须让它在日志里可见。
+     *
+     * <p>这两行占位符是"静默致命"的典型：{@code roots.shared=<GAME_DIR>/aiplayer} 会让所有文件工具
+     * 指向不存在的目录；{@code bot_names=["ExampleBot"]} 会让 agent 完全不再响应真实 @提及。
+     * 两者都不会报错，只会表现成"功能突然不工作"。
+     */
+    private static void warnIfPlaceholderConfig(Path target) {
+        Path cfg = target.resolve("config/config.yaml");
+        if (!Files.isRegularFile(cfg)) {
+            return;
+        }
         try {
-            for (String rel : keep) {
-                Path src = target.resolve(rel);
-                if (!Files.exists(src)) {
-                    continue;
-                }
-                Path dst = backup.resolve(rel);
-                Files.createDirectories(dst.getParent());
-                Files.move(src, dst, StandardCopyOption.REPLACE_EXISTING);
+            String txt = Files.readString(cfg, StandardCharsets.UTF_8);
+            if (txt.contains("<GAME_DIR>")) {
+                AiPlayer.LOG.warn("[sidecar] ★config.yaml 里 roots.shared 仍是脱敏占位符 <GAME_DIR>——"
+                        + "文件工具会指向不存在的目录。请改成你本机的 <游戏目录>/aiplayer");
             }
-            deleteRecursively(target);
-            Files.createDirectories(target);
-            for (String rel : keep) {
-                Path src = backup.resolve(rel);
-                if (!Files.exists(src)) {
-                    continue;
-                }
-                Path dst = target.resolve(rel);
-                Files.createDirectories(dst.getParent());
-                moveTree(src, dst);
+            if (txt.contains("bot_names: [\"ExampleBot\"]")) {
+                AiPlayer.LOG.warn("[sidecar] ★config.yaml 里 bot_names 仍是示例值 ExampleBot——"
+                        + "agent 不会响应真实的 @提及。请改成你 bot 的游戏内名字");
             }
-        } finally {
-            try (Stream<Path> walk = Files.walk(backup)) {
-                walk.sorted(Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
-            } catch (IOException ignored) {
-            }
+        } catch (IOException ignored) {
         }
     }
 

@@ -9,7 +9,7 @@
 - **`0.1` = 上一版方案**：即 `v0.1 → v0.2 → v0.3 → v0.3.1` 这条线的整体（mod 化摸索期，参照旧 JsMacros 栈做等价替换）
 - **`0.2.1.x` = 当前序列**：`0.2` 当前架构（mod 内置控制 + 自建区 + 通用 API），
   末位 `x` = 迭代号（感知 / 交互 / UI 输入 / 容器 / 截图 / 权限表都在这一线递增，不拆中间位）
-- 因此当前是 **`0.2.1.15`**（0.2.1.7-12 = **agent sidecar 全链路**：
+- 因此当前是 **`0.2.1.39`**（0.2.1.7-12 = **agent sidecar 全链路**：
   部署（首次启动解压 agent 包，跨版本继承 keys/config/logs）→ 拉起（ensure_running 复用不重复拉起）→
   看门狗（探活失败退避重启）→ attach/detach 生命周期（游戏退出杀自己拉起的树/放行）→
   游戏内动作 `agent_status / agent_start / agent_stop`（受 [sidecar].enabled 管辖）；
@@ -17,6 +17,40 @@
   0.2.1.13 = 状态诊断字段 + 关闭播报；0.2.1.14 = `online_players` 全服在线名单；
   0.2.1.15 = **聊天时间戳**（chat_log.jsonl 与 /chat 输出带可读 `ts` 字段、重启重载历史不再丢时间戳；
   同包 sidecar 同步框架更新：会话日志逐条带 `ts`/`rel_s`、去除测试阶段开始播报只留结束统计），见下文专节）
+
+**0.2.1.16-39 概览（详见各专节或 `docs/`）**：
+| 版本 | 内容 |
+|---|---|
+| 0.2.1.26 | `connect`/`join` 高级联机立即连接 |
+| 0.2.1.28 | `authAutoReply` + `authPassword` 认证服自动登录 |
+| 0.2.1.31/32 | `sign_edit`/`sign` 写牌（一次 4 行，禁逐键打字）；`sign_read`/`sign_text` 读双面文本 |
+| 0.2.1.33/34 | `be_nbt` 读方块实体 NBT（辉光管板文字唯一途径）；`item_nbt` 读物品组件（★查耐久用它） |
+| 0.2.1.35 | **`dig` 挖掘**（走 `MultiPlayerGameMode` 破坏 API，绕开鼠标抓取门禁）+ `look_lock` 视角锁定 + 状态诊断字段 `window_active`/`mouse_grabbed` |
+| 0.2.1.36 | `look_lock` 的 `face` 面锁定 |
+| 0.2.1.37 | `look_lock` 的 `target`/`target_type` 实体锁定 |
+| 0.2.1.38 | `entities` 输出 `id`；`target=<id>` 回填真实类型 |
+| 0.2.1.39 | **`place` 放置方块**（走 `MultiPlayerGameMode.useItemOn`，含碰撞箱预检 + 支撑面自动选择 + `side=` 显式面） |
+
+## 2026-10-18 性能成果：客户端启动 28 分钟 → 66 秒
+
+三个独立根治（详见 `docs/2026-10-18-启动与运行缓慢-根因分析.md`）：
+
+1. **TLM FastPack**（独立小 mod，见仓库 `pi-wu-gu/tlm_fastpack`）：跳过 TLM 默认包
+   每次启动的全量重拷（UnionFileSystem 读侧 + Windows `DeleteFile0` 删侧双重慢路径），
+   8-19 分钟 → 0.14-0.79 秒；reset/升级走增量同步全在 15 秒内
+2. **`glDebugVerbosity:0`**：某模组坏纹理曾每帧刷 GL_INVALID_VALUE（3 小时 532MB 日志）
+3. **FTB Chunks 地图锁**：region 数据饿死主线程致动作 20s 超时，已归档并配
+   `prune_ftbchunks.py` 定期清理
+
+
+> **0.2.1.40（已部署）**：`ControlServer` 失败判定修复（`endsWith("_err: 缺少 text")` → 正则 `^[a-z][a-z0-9_]*_err:`，修掉 92 处 `_err` 被误判成成功）；包名改为 `net.aiplayer` 后首次构建；内嵌 bundle 重打（210 条目，含 memory/approval/file_ops/wake_blacklist 四个新模块）。
+> 实网验收 34/34（`<AGENT_REPO>/aitest/test_0_2_1_40_live.py`）：三种失败形态均判 `ok=false`、`command_errors` 精确 +3。
+
+> ⚠ **0.2.1.41 待发（代码已改、编译通过、未构建）**：`AgentSidecar.deployTo` 顺序重构——
+> 原实现先 `inheritFromPrevious()` 再 `unzip()`，而 bundle 内含默认 `config.yaml`，
+> 导致**继承的用户配置被覆盖**（`roots.shared` 变 `<GAME_DIR>` 占位符、`bot_names` 变 `ExampleBot`，
+> 后者会让 @提及完全失灵）。现改为 stash → unzip → restore，并新增 `warnIfPlaceholderConfig()`
+> 在日志里显式告警，不再静默失效。
 
 ## 当前状态：**v0.3 —— 自建区 + 通用 API 配置 + 内置 AI 网络访问**
 
@@ -33,7 +67,8 @@
 | **真实对话** | ✅ `llm_chat`：status 200、usage 正常返回 |
 | 控制面可选鉴权 | ✅ 配了 `controlToken` 就必须带 `X-AI-Token` 请求头（否则 401） |
 
-**动作名 38 个 / 实现 25 个**，新增两组：
+**v0.3 时点的动作规模：38 名 / 25 实现**（★这是历史值，当前为 **58 实现 / 102 动作名**，
+见上方版本概览与 `docs/` 下的功能专节），当时新增两组：
 - **自建区（工具/文档）**：`file_read` `file_write` `file_append` `file_list` `tools` `docs`
 - **内置 AI（LLM）**：`llm_chat(llm)` `llm_ping`
 
@@ -99,7 +134,7 @@
 `neoforge-21.1.236.jar` 核实）。旧 index.js 里那 23 处反射从此变成**编译期可见**——
 映射一变就编译不过，而不是运行期静默失效。MDG 会自动把 AT 打进产物 jar。
 
-**动作名 47 个 / 实现 33 个。**
+**动作名 47 个 / 实现 33 个。**（该版本时点数）
 
 ### 容器操作（0.2.1.2，已实机验证）
 
@@ -134,7 +169,7 @@
 **QUICK_MOVE 合并语义与 vanilla 完全一致**：shift 点 62 个云杉板，目标热键栏 43 槽已有 19 个
 → 先补满 43 到 64，剩余 17 进空槽 38（不是整堆搬）。agent 按 vanilla 规则预期即可。
 
-**动作名 62 个（含别名）/ 实现 57 个。**
+**动作名 62 个（含别名）/ 实现 57 个。**（该版本时点数）
 
 ### GUI 文本输入（0.2.1.3）
 
@@ -150,7 +185,10 @@
 - **目标框选取优先级**：`index`（get_screen 的控件序号 i）> `x,y` 命中 > 当前焦点 > 界面第一个 EditBox
 - **通用**：维度网络搜索框 / JEI 搜索 / 告示牌与书魔命名框都走同一条路
 
-**动作名 68 个（含别名）/ 实现 42 个。**（该版本时点数；v0.2.1.34 起为 85/51，selfToolEnabled 开时 87/52）
+**动作名 68 个（含别名）/ 实现 42 个。**（该版本时点数）
+
+> **当前规模（v0.2.1.39）**：**动作名 102 个（含别名）/ 实现 58 个**（selfToolEnabled=false，实测 2026-10-18）。
+> selfToolEnabled 开时 104/60。★权限档也会改变数量：gameActionMode 的 full=102 / safe=84 / observe=81。
 
 ### 截图（0.2.1.4）
 
@@ -329,7 +367,8 @@ bot 身边没人时列表为空，曾被误读成"服务器没人、某玩家不
 `Minecraft.handleKeybinds()` 末尾四门禁（`screen==null && !flag2 && keyAttack.isDown() &&
 mouseHandler.isMouseGrabbed()`）中，`isMouseGrabbed` 依赖 `grabMouse()`，而 `grabMouse()` 前置
 `isWindowActive()`——**游戏窗口不是前台时静默 no-op**。四层证据（源码门禁 / 前台窗口=Explorer /
-物理鼠标微动 20px 摄像机零响应 / 排除项全清）见 `docs/记忆/2026-10-17-挖方块诊断.md`。
+物理鼠标微动 20px 摄像机零响应 / 排除项全清）见运行时目录
+`<gamedir>/aiplayer/docs/记忆/day/2026-10-17-挖方块诊断.md`（该目录由 agent 在运行期维护，不在本仓库内）。
 **其他动作不受影响**是因为 `look/press/keys/move` 全是模组直设 `KeyMapping` 状态或发包，
 不过原版的"鼠标抓取"门禁。
 
@@ -466,7 +505,7 @@ mouseHandler.isMouseGrabbed()`）中，`isMouseGrabbed` 依赖 `grabMouse()`，�
 | 内嵌 HTTP 服务 | ✅ `http://127.0.0.1:8780`（只用 `java.base`，无外部依赖、无嵌套 jar） |
 | `GET /state` | ✅ 实时返回 坐标/血量/饥饿/维度/游戏模式/时间/手持/视线方块/附近玩家/聊天尾 |
 | `GET /chat?since=&limit=` | ✅ 单调 id + 落盘（`aiplayer/chat/chat_log.jsonl`），支持"只取新消息"游标 |
-| `GET /actions` | ✅ 78 个动作名（含别名）/ 47 个实现（按类分组，自省用；当前 selfToolEnabled=false，开则 80/48） |
+| `GET /actions` | ✅ **102 个动作名（含别名）/ 58 个实现**（按类分组，自省用；selfToolEnabled 开则 104/60；权限档 full=102/safe=84/observe=81） |
 | `POST /command` | ✅ `{"commands":[{...}]}`，**逐条在主线程执行并等完成**，单条与批量都通 |
 | `say` 真实送达 | ✅ 游戏内确实出现 `[world] <BOT_NAME>: ...` |
 | `find_block`（地形工具） | ✅ 搜到 2 个石碑、最近 (202,77,-1117) 距离 8，**reads 12701 / 5 ms**（JsMacros 版同参数 208 ms） |
@@ -532,6 +571,19 @@ cd "<MOD_REPO>" && ./gradlew build
 这个静态文件；2026-10-17 实测漏过这一步：提示词/工具描述改了没生效，daemon 跑的 sidecar 还是旧版
 （排查现象：`aiplayer-agent/<版本>/core/runner.py` 内容与 `<AGENT_REPO>/core/runner.py` 不一致）。
 验证方法：部署后对比两边文件的关键串（如 `grep -c look_lock <sidecar>/core/runner.py` 应 >0）。
+
+**★只改 agent 的 Python 源码时，不必走上面四步**（不用重打 bundle、不用重启 MC）：
+模组按版本目录缓存 sidecar（`<gamedir>/aiplayer-agent/<mod_version>/`），直接
+
+```bash
+cp <AGENT_REPO>/core/*.py "<sidecar>/core/"        # 以及 tools/builtin/*.py
+rm -rf "<sidecar>/core/__pycache__" "<sidecar>/tools/builtin/__pycache__"
+# 确认 8770 /status 为 idle → 杀掉 run.py --daemon 进程 → 重新拉起
+cd "<sidecar>" && ./runtime/python/python.exe run.py --daemon
+```
+
+约 15 秒即可生效（实测 2026-10-18）。**只有 bundle 本身变了才需要升 `mod_version` 重解压。**
+⚠️ 模组侧 watchdog 不一定自动拉起，杀完要手动确认进程在跑。
 
 ## 安装（给别的整合包）
 
@@ -611,12 +663,13 @@ aiplayer/
 │   ├── AiPlayerConfig.java    # ModConfigSpec 用户配置
 │   ├── AiPlayerPaths.java     # <gamedir>/aiplayer/ 解析、骨架、原子写、实例锁
 │   ├── ControlServer.java     # 内嵌 HTTP 服务（/state /chat /actions /command /health /stats）
-│   ├── Actions.java           # 动作层（47 个实现 / 78 个名字，含别名；selfToolEnabled 开时 48/80）
+│   ├── Actions.java           # 动作层（58 个实现 / 102 个名字，含别名；selfToolEnabled 开时 60/104）
+│   │                          #   ★文件已 3300+ 行，占全仓 ~46%，后续按能力域拆分
 │   ├── ChatBuffer.java        # 聊天缓冲（单调 id + 落盘）
 │   └── Json.java              # JSON 输出辅助
 ├── src/main/resources/assets/aiplayer/lang/   # en_us / zh_cn
 ├── src/main/templates/META-INF/neoforge.mods.toml
-└── .template-original/     # 原始模板的示例代码，已移出编译路径，仅作参考
+└── .template-original/     # 原始模板示例代码，已移出编译路径且**不入库**（含本机用户名包名）
 ```
 
 ## 许可
