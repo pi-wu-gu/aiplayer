@@ -9,7 +9,7 @@
 - **`0.1` = 上一版方案**：即 `v0.1 → v0.2 → v0.3 → v0.3.1` 这条线的整体（mod 化摸索期，参照旧 JsMacros 栈做等价替换）
 - **`0.2.1.x` = 当前序列**：`0.2` 当前架构（mod 内置控制 + 自建区 + 通用 API），
   末位 `x` = 迭代号（感知 / 交互 / UI 输入 / 容器 / 截图 / 权限表都在这一线递增，不拆中间位）
-- 因此当前是 **`0.2.1.39`**（0.2.1.7-12 = **agent sidecar 全链路**：
+- 因此当前是 **`0.2.1.45`**（0.2.1.7-12 = **agent sidecar 全链路**：
   部署（首次启动解压 agent 包，跨版本继承 keys/config/logs）→ 拉起（ensure_running 复用不重复拉起）→
   看门狗（探活失败退避重启）→ attach/detach 生命周期（游戏退出杀自己拉起的树/放行）→
   游戏内动作 `agent_status / agent_start / agent_stop`（受 [sidecar].enabled 管辖）；
@@ -18,7 +18,7 @@
   0.2.1.15 = **聊天时间戳**（chat_log.jsonl 与 /chat 输出带可读 `ts` 字段、重启重载历史不再丢时间戳；
   同包 sidecar 同步框架更新：会话日志逐条带 `ts`/`rel_s`、去除测试阶段开始播报只留结束统计），见下文专节）
 
-**0.2.1.16-39 概览（详见各专节或 `docs/`）**：
+**0.2.1.16-45 概览（详见各专节或 `docs/`）**：
 | 版本 | 内容 |
 |---|---|
 | 0.2.1.26 | `connect`/`join` 高级联机立即连接 |
@@ -30,6 +30,11 @@
 | 0.2.1.37 | `look_lock` 的 `target`/`target_type` 实体锁定 |
 | 0.2.1.38 | `entities` 输出 `id`；`target=<id>` 回填真实类型 |
 | 0.2.1.39 | **`place` 放置方块**（走 `MultiPlayerGameMode.useItemOn`，含碰撞箱预检 + 支撑面自动选择 + `side=` 显式面） |
+| 0.2.1.40 | `ControlServer` 失败判定修复（92 处 `_err` 误判成功 → 正则 `^[a-z][a-z0-9_]*_err:`）+ JSON 形式失败判定；包名 `net.aiplayer` |
+| 0.2.1.41 | `AgentSidecar.deployTo` 顺序重构（部署失败保数据）+ 重部署运行守卫 + 支撑面精确匹配 |
+| 0.2.1.43 | 内嵌 agent bundle 重打（关键词记忆 v2 + 待办清单，sidecar 侧关键词触发注入/每轮待办注入） |
+| 0.2.1.44 | `get_container` 大输出限量参数（`compact`/`only`/`max_slots`/`find`，治 156 槽全量 dump 烧穿 token） |
+| 0.2.1.45 | `get_container` 限量纪律入 agent 提示词 + `_dig_container` 专用摘要器；USER_DATA 跨版本继承修复（每文件回退） |
 
 ## 2026-10-18 性能成果：客户端启动 28 分钟 → 66 秒
 
@@ -53,9 +58,29 @@
 > 计入 ok 与 `command_errors`，覆盖 dig/place 全部 errJson 失败路径）；`INTERACTIVE_HINTS`
 > 改下划线分段精确匹配（`bed` 不再误伤 `bedrock`）。bundle 重打（210 条目）+ 脱敏复扫 0 命中。
 
-## 当前状态：**v0.3 —— 自建区 + 通用 API 配置 + 内置 AI 网络访问**
+> ✅ **0.2.1.43（已部署）**：内嵌 agent bundle 重打——sidecar agent 侧新增**关键词记忆 v2**
+> （`config/keywords.json` 短条目按词触发注入，三态填充 full/keyword_only/off，单次运行注入上限 3 条，
+> 玩家专有条目在线时无条件带上）与**待办清单**（`config/todo.json`，每轮唤醒无条件注入，
+> `finish_run` 之前应为空成纪律）；模组侧无动作变化，随 bundle 升 `mod_version`。
+>
+> ✅ **0.2.1.44（已部署）**：`get_container` **大输出限量参数**（默认全关=旧行为）：
+> `compact=true`（只回非空槽 6 字段）、`only=container|inventory`（分段）、`max_slots=N`（硬裁）、
+> `find=物品id子串`（定位）；限量生效追加 `shown`/`truncated`——背景：Sophisticated Backpacks
+> 156 槽全量 ≈2.3 万字符，曾把 agent token 烧穿熔断。
+>
+> ✅ **0.2.1.45（已部署，2026-10-19 编译核验：jar 与部署机 md5 一致）**：agent 侧
+> PRIMARY_PROMPT 补 get_container 限量纪律（禁反复全量 dump）+ context 层 `_dig_container`
+> 专用摘要器（原错挂 `_dig_inventory` 必抛错回退）；模组侧 USER_DATA 跨版本继承改**每文件回退**
+> （整目录回退会连用户改动一起冲掉）。
 
-**v0.3 实测通过的内容**（真实整合包 `夯空学_新蒸程` / MC 1.21.1 / NeoForge 21.1.236）：
+## 能力清单（v0.3 起累积至 0.2.1.x）
+
+以下按主题组织：v0.3 的自建区/内置 AI 之后，UI 感知、容器、权限表、dig/place 等均在
+0.2.1.x 线持续叠加（版本归属见各节标题）。
+
+### 自建区 + 通用 API 配置（v0.3）
+
+**以下为 v0.3 时点实测通过的内容**（真实整合包 `夯空学_新蒸程` / MC 1.21.1 / NeoForge 21.1.236）：
 
 | 能力 | 结果 |
 |---|---|
@@ -68,8 +93,8 @@
 | **真实对话** | ✅ `llm_chat`：status 200、usage 正常返回 |
 | 控制面可选鉴权 | ✅ 配了 `controlToken` 就必须带 `X-AI-Token` 请求头（否则 401） |
 
-**v0.3 时点的动作规模：38 名 / 25 实现**（★这是历史值，当前为 **58 实现 / 102 动作名**，
-见上方版本概览与 `docs/` 下的功能专节），当时新增两组：
+**v0.3 时点的动作规模：38 名 / 25 实现**（★这是历史值；**v0.2.1.45 时点见下方「当前规模」节**，
+按部署实配口径逐档核对过注册表），当时新增两组：
 - **自建区（工具/文档）**：`file_read` `file_write` `file_append` `file_list` `tools` `docs`
 - **内置 AI（LLM）**：`llm_chat(llm)` `llm_ping`
 
@@ -188,8 +213,13 @@
 
 **动作名 68 个（含别名）/ 实现 42 个。**（该版本时点数）
 
-> **当前规模（v0.2.1.39）**：**动作名 102 个（含别名）/ 实现 58 个**（selfToolEnabled=false，实测 2026-10-18）。
-> selfToolEnabled 开时 104/60。★权限档也会改变数量：gameActionMode 的 full=102 / safe=84 / observe=81。
+> **当前规模（v0.2.1.45）**：源码注册调用共 **57 个**（含全部条件闸全开）。
+> 按**部署实配**（`sidecar.enabled=true` / `selfToolEnabled=false` / `commandEnabled=true` /
+> `fileMode=full` / `networkEnabled=true`）实测口径：**full = 56 实现 / 103 动作名（含别名）**；
+> `gameActionMode` 逐档摘除后 **safe = 48 / 85**、**observe = 45 / 82**。
+> `selfToolEnabled=true` 时全开 = 57 实现 / 105 名；出厂默认（`sidecar.enabled=false`）= 53 实现 / 98 名。
+> （口径说明：条件闸在装配期生效，`{"type":"actions"}` 的 count 随配置变化；以上数字按
+> `Actions.java` 注册调用逐档展开核算，与 `/actions` 自省一致。）
 
 ### 截图（0.2.1.4）
 
@@ -506,7 +536,7 @@ mouseHandler.isMouseGrabbed()`）中，`isMouseGrabbed` 依赖 `grabMouse()`，�
 | 内嵌 HTTP 服务 | ✅ `http://127.0.0.1:8780`（只用 `java.base`，无外部依赖、无嵌套 jar） |
 | `GET /state` | ✅ 实时返回 坐标/血量/饥饿/维度/游戏模式/时间/手持/视线方块/附近玩家/聊天尾 |
 | `GET /chat?since=&limit=` | ✅ 单调 id + 落盘（`aiplayer/chat/chat_log.jsonl`），支持"只取新消息"游标 |
-| `GET /actions` | ✅ **102 个动作名（含别名）/ 58 个实现**（按类分组，自省用；selfToolEnabled 开则 104/60；权限档 full=102/safe=84/observe=81） |
+| `GET /actions` | ✅ 按类分组返回全部已注册动作（v0.2 时点 29 名字/18 实现；**当前规模见下方「当前规模」节**） |
 | `POST /command` | ✅ `{"commands":[{...}]}`，**逐条在主线程执行并等完成**，单条与批量都通 |
 | `say` 真实送达 | ✅ 游戏内确实出现 `[world] <BOT_NAME>: ...` |
 | `find_block`（地形工具） | ✅ 搜到 2 个石碑、最近 (202,77,-1117) 距离 8，**reads 12701 / 5 ms**（JsMacros 版同参数 208 ms） |
@@ -528,11 +558,16 @@ mouseHandler.isMouseGrabbed()`）中，`isMouseGrabbed` 依赖 `grabMouse()`，�
 |---|---|---|
 | v0.1 | 运行数据目录 + 配置 + 实例锁 | ✅ |
 | v0.2 | 内嵌控制服务（`/state` `/chat` `/actions` `/command`）+ 聊天缓冲 + 18 个动作 | ✅ |
-| **v0.3** | **自建区（tools/ + docs/ + 文件读写 + 穿越防护）+ 通用 API 配置 + 内置 AI 出站网络（llm_chat/llm_ping）+ 控制面鉴权** | ✅ **本次** |
-| v0.4 | 动作补全：容器/合成（`cont_*` `click_slot`）、寻路（`goto`）、挖掘与放置（含反作弊对准时序） | 下一个 |
-| v0.5 | 内置大脑：工具循环 + 上下文压缩（把 `llm_chat` 组装成自主决策） | 待做 |
-| v0.6 | Capability 探测 + 优雅降级（目标整合包缺 Create/Curios 等依赖时不崩） | 待做 |
-| v0.7 | 看门狗 + 日志滚动；JsMacros 兼容 shim（仅当需要跨版本兜底时） | 待定 |
+| **v0.3** | **自建区（tools/ + docs/ + 文件读写 + 穿越防护）+ 通用 API 配置 + 内置 AI 出站网络（llm_chat/llm_ping）+ 控制面鉴权** | ✅ |
+| **0.2.1.x（现行线）** | **动作补全 + sidecar 外挂 agent 全链路 + 权限表五轴 + UI/容器感知 + dig/place API 路径** | ✅ 进行中（当前 0.2.1.45） |
+| └ 容器/合成 | `get_container`/`click_slot`/`cont_button`（0.2.1.2）+ 限量参数（0.2.1.44） | ✅ 已完成 |
+| └ 挖掘/放置 | `dig`（0.2.1.35）/ `place`（0.2.1.39），均走 gameMode API 发包绕开前台门禁 | ✅ 已完成 |
+| └ sidecar 全链路 | 部署/拉起/看门狗/attach-detach/agent_status 等（0.2.1.7-12）+ 部署保数据（0.2.1.41） | ✅ 已完成 |
+| └ 决策层大脑 | **改道**：不内置，由 sidecar 外挂 agent（[aiplayer-agent](https://github.com/pi-wu-gu/aiplayer-agent)）实现；模组只提供原子接口 | ✅ 已改道 |
+| 寻路 `goto` | 自动寻路（A*/baritone 类） | 待做 |
+| Capability 探测 + 优雅降级 | 目标整合包缺 Create/Curios 等依赖时不崩 | 待做 |
+| 日志滚动 | 长期挂机的日志体积治理 | 待做 |
+| JsMacros 兼容 shim | 仅当需要跨版本兜底时 | 待定 |
 
 ### v0.1 已实现（运行数据目录，可独立验证，不依赖任何外部运行时）
 
@@ -597,7 +632,8 @@ jar 内嵌 **Windows 版** sidecar agent 运行时（首次运行自动解压到
 Linux/macOS 用户或想改 agent 源码时，才需要自备 Python 3.13+ 并从
 [aiplayer-agent](https://github.com/pi-wu-gu/aiplayer-agent) 仓库运行 `run.py`。
 
-开源协议：[MIT](LICENSE)（`TEMPLATE_LICENSE.txt` 为 NeoForged MDK 模板自带，覆盖模板文件）。
+开源协议：All Rights Reserved（保留所有权利；`gradle.properties` 的 `mod_license` 同此。
+`TEMPLATE_LICENSE.txt` 为 NeoForged MDK 模板自带，仅覆盖模板文件）。
 
 ## 已踩的坑（实测记录）
 
@@ -664,8 +700,8 @@ aiplayer/
 │   ├── AiPlayerConfig.java    # ModConfigSpec 用户配置
 │   ├── AiPlayerPaths.java     # <gamedir>/aiplayer/ 解析、骨架、原子写、实例锁
 │   ├── ControlServer.java     # 内嵌 HTTP 服务（/state /chat /actions /command /health /stats）
-│   ├── Actions.java           # 动作层（58 个实现 / 102 个名字，含别名；selfToolEnabled 开时 60/104）
-│   │                          #   ★文件已 3300+ 行，占全仓 ~46%，后续按能力域拆分
+│   ├── Actions.java           # 动作层（57 个注册调用，含全部条件闸；部署实配 full=56/103，见「当前规模」节）
+│   │                          #   ★文件 3375 行，占全仓 ~46%，后续按能力域拆分
 │   ├── ChatBuffer.java        # 聊天缓冲（单调 id + 落盘）
 │   └── Json.java              # JSON 输出辅助
 ├── src/main/resources/assets/aiplayer/lang/   # en_us / zh_cn
@@ -675,4 +711,5 @@ aiplayer/
 
 ## 许可
 
-All Rights Reserved（暂定）。注意：本仓库源自 NeoForge MDK，模板部分见 `TEMPLATE_LICENSE.txt`。
+本项目代码：**All Rights Reserved**（保留所有权利，`gradle.properties` 的 `mod_license` 同此）。
+注意：本仓库源自 NeoForge MDK，**模板部分**（`LICENSE` / `TEMPLATE_LICENSE.txt` 覆盖的文件）为 MIT。
