@@ -93,9 +93,18 @@ public final class AgentSidecar {
     private static void deployTo(Path target, String version) throws IOException {
         Path zipFile = extractBundleToTemp();
         Path stash = null;
+        boolean userDataRestored = false;
         try {
             boolean fresh = !Files.isDirectory(target);
             if (!fresh) {
+                // ★运行守卫（2026-10-18）：agent 正从该目录运行时重部署会把目录
+                //   删一半/解压一半（deleteRecursively 对被占用文件静默跳过），
+                //   最后 marker 照写 → 得到一个"标记为已部署"的混合损坏安装。
+                if (isAgentAlive()) {
+                    AiPlayer.LOG.warn("[sidecar] ★agent 正在运行（8770 在线），跳过重部署以免损坏安装：{}。"
+                            + "先停止 agent（或升级 mod 版本号）后重启。", target);
+                    return;
+                }
                 // 同版本重部署：先把用户数据挪到临时区，清空目录后再解压
                 stash = stashUserData(target);
                 deleteRecursively(target);
@@ -112,6 +121,7 @@ public final class AgentSidecar {
                 inheritFromPrevious(target.getParent(), target);
             } else if (stash != null) {
                 restoreUserData(stash, target);
+                userDataRestored = true;
             }
             ensureKeysTemplate(target);
             Files.createDirectories(target);   // 目录必然已存在；防呆
@@ -119,7 +129,15 @@ public final class AgentSidecar {
             Files.writeString(target.resolve(MARKER_FILENAME), version, StandardCharsets.UTF_8);
         } finally {
             if (stash != null) {
-                cleanupStash(stash);
+                if (userDataRestored) {
+                    cleanupStash(stash);
+                } else {
+                    // ★stash 是用户数据（keys/config/logs）的**唯一副本**（原件已随
+                    //   deleteRecursively 删除）：部署中途失败时绝不能清理，否则
+                    //   keys.yaml 里的 API 密钥与真实配置会永久丢失。留目录 + 写日志。
+                    AiPlayer.LOG.error("[sidecar] ★部署未完成，用户数据备份保留在: {}（keys/config/logs 未丢失）",
+                            stash);
+                }
             }
             try {
                 Files.deleteIfExists(zipFile);
@@ -195,15 +213,18 @@ public final class AgentSidecar {
         }
     }
 
-    /** 升级时保留用户数据（keys / config / logs）到临时目录，解压新包后移回。 */
     /** 把用户数据（keys/config/logs）挪到临时区并返回该临时目录。
      *
      * <p>★只 stash 不恢复——恢复必须由调用方在 {@code unzip} 之后做（见 deployTo 注释）。
      * 旧实现 {@code preserveAndClear} 把"挪走+清空+放回"三步绑在一起，放回发生在解压之前，
      * 于是 bundle 里的默认 config.yaml 又把用户配置覆盖回去了。
+     *
+     * <p>★备份目录建在 target 的父目录下（与游戏目录同一文件系统）：跨卷
+     * {@code Files.move} 搬非空 logs 目录会直接失败；同卷则是原子 rename。
+     * 失败残留时用户也能在 aiplayer-agent/ 下直接看到并手动恢复。
      */
     private static Path stashUserData(Path target) throws IOException {
-        Path backup = Files.createTempDirectory("aiplayer-agent-keep");
+        Path backup = Files.createTempDirectory(target.getParent(), "aiplayer-agent-keep");
         for (String rel : USER_DATA) {
             Path src = target.resolve(rel);
             if (!Files.exists(src)) {

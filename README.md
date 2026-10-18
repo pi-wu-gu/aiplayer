@@ -46,11 +46,12 @@
 > **0.2.1.40（已部署）**：`ControlServer` 失败判定修复（`endsWith("_err: 缺少 text")` → 正则 `^[a-z][a-z0-9_]*_err:`，修掉 92 处 `_err` 被误判成成功）；包名改为 `net.aiplayer` 后首次构建；内嵌 bundle 重打（210 条目，含 memory/approval/file_ops/wake_blacklist 四个新模块）。
 > 实网验收 34/34（`<AGENT_REPO>/aitest/test_0_2_1_40_live.py`）：三种失败形态均判 `ok=false`、`command_errors` 精确 +3。
 
-> ⚠ **0.2.1.41 待发（代码已改、编译通过、未构建）**：`AgentSidecar.deployTo` 顺序重构——
-> 原实现先 `inheritFromPrevious()` 再 `unzip()`，而 bundle 内含默认 `config.yaml`，
-> 导致**继承的用户配置被覆盖**（`roots.shared` 变 `<GAME_DIR>` 占位符、`bot_names` 变 `ExampleBot`，
-> 后者会让 @提及完全失灵）。现改为 stash → unzip → restore，并新增 `warnIfPlaceholderConfig()`
-> 在日志里显式告警，不再静默失效。
+> ✅ **0.2.1.41（已部署）**：`AgentSidecar.deployTo` 顺序重构（stash → unzip → restore，修掉
+> bundle 默认 config 覆盖继承配置）+ `warnIfPlaceholderConfig()` 占位符日志告警；**部署失败不再丢用户数据**（stash 仅在恢复成功后清理，
+> 失败保留备份并 ERROR 日志给出路径；stash 改建在 target 同卷父目录）；**重部署运行守卫**
+> （agent 在跑时 WARN 跳过，防删一半/解压一半）；**JSON 形式失败判定**（`{"ok":false,...}`
+> 计入 ok 与 `command_errors`，覆盖 dig/place 全部 errJson 失败路径）；`INTERACTIVE_HINTS`
+> 改下划线分段精确匹配（`bed` 不再误伤 `bedrock`）。bundle 重打（210 条目）+ 脱敏复扫 0 命中。
 
 ## 当前状态：**v0.3 —— 自建区 + 通用 API 配置 + 内置 AI 网络访问**
 

@@ -681,6 +681,32 @@ final class Drivers {
             "command_block", "dragon_egg", "end_portal_frame", "respawn_anchor");
 
     /**
+     * 可交互提示按「下划线分段」精确匹配（2026-10-18 修）。
+     * 原来用 {@code blockId.contains(hint)}：{@code "bed"} 会命中 {@code "bedrock"}——
+     * 基岩被误判为可交互方块、排除出支撑面候选（同类的 {@code "door"} 命中 {@code "trapdoor"}
+     * 反而无害）。分段后 {@code oak_door} 匹配 door、{@code red_bed} 匹配 bed，
+     * 而 {@code bedrock} 不匹配任何提示。
+     */
+    private static boolean interactiveHint(String blockId) {
+        String path = blockId;
+        int colon = path.indexOf(':');
+        if (colon >= 0) {
+            path = path.substring(colon + 1);
+        }
+        for (String hint : INTERACTIVE_HINTS) {
+            if (path.equals(hint)) {
+                return true;
+            }
+            for (String seg : path.split("_")) {
+                if (seg.equals(hint)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * 发起放置（主线程，立即返回）。
      *
      * <p>★与 {@code keys key.use} 的本质区别：本动作直接走
@@ -775,7 +801,7 @@ final class Drivers {
                     continue;   // 箱子/工作台/熔炉——右键开界面
                 }
                 String sid = Actions.blockId(ss);
-                boolean interactive = INTERACTIVE_HINTS.stream().anyMatch(sid::contains);
+                boolean interactive = interactiveHint(sid);
                 if (interactive) {
                     continue;   // 按钮/拉杆/门——右键触发交互
                 }
@@ -820,7 +846,7 @@ final class Drivers {
         place = t;
         String supportId = Actions.blockId(level.getBlockState(support));
         boolean supportInteractive = level.getBlockState(support).hasBlockEntity()
-                || INTERACTIVE_HINTS.stream().anyMatch(supportId::contains);
+                || interactiveHint(supportId);
         ChatBuffer.add("[place] 已发起：" + t.itemId + " → " + posStr(target)
                 + "（支撑 " + posStr(support) + " " + supportId + " 的 " + chosenFace.getName() + " 面）");
         var parts = new ArrayList<String>();

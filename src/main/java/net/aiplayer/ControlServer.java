@@ -379,8 +379,14 @@ final class ControlServer {
         }
         String result = holder[0] == null ? "(null)" : holder[0];
         Actions.setLastAction(result);
+        // ★2026-10-18 补：JSON 形式的失败（{"ok":false,...}）也要判失败。
+        //   此前 ERR_RESULT 只认纯字符串的 "<动作>_err:" 前缀，而 Drivers.errJson() 把
+        //   dig/place 等失败包在 JSON 里返回（Json.obj 手写无空格输出，故用 contains 匹配，
+        //   与键序无关）。不补这一条，dig/place 的全部失败路径仍会被判 ok=true、
+        //   /stats.command_errors 也计不到。
         boolean ok = !(result.startsWith("unknown:") || result.startsWith("error:")
-                || ERR_RESULT.matcher(result).matches());
+                || ERR_RESULT.matcher(result).matches()
+                || result.contains("\"ok\":false"));
         return new DispatchResult(result, ok);
     }
 
